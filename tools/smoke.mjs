@@ -2,7 +2,9 @@
 // report console errors and any network request other than the page itself.
 import { resolve } from 'node:path';
 import { openPage } from './cdp.mjs';
-const page = await openPage(resolve('index.html'), { query: '' });
+// Usage: node tools/smoke.mjs [url]   (defaults to the local index.html)
+const target = process.argv[2] || resolve('index.html');
+const page = await openPage(target, { query: '' });
 const t0 = Date.now();
 await page.waitFor(`document.getElementById('msg').textContent.includes('클릭하면')`, 600000);
 console.log('ready to play in', ((Date.now() - t0) / 1000).toFixed(1), 's');
@@ -23,6 +25,6 @@ await key('Space', ' '); await new Promise((r) => setTimeout(r, 1000));
 console.log('resumed, t =', await now());
 const errs = page.consoleLog.filter((l) => ['error', 'exception', 'warning'].includes(l.type));
 console.log('console errors/warnings:', errs.length ? errs : 'none');
-const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:'));
-console.log('network requests besides the file itself:', ext.length ? ext : 'none');
+const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:') && u.split('?')[0] !== target && !u.endsWith('/favicon.ico'));
+console.log('requests:', page.network.length, '| besides the page itself:', ext.length ? ext : 'none');
 await page.close(); process.exit(0);

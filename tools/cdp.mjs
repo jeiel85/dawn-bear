@@ -68,7 +68,7 @@ export async function openPage(htmlPath, { query = 'debug=1', port = 9333 + Math
   await send('Network.enable');
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
-  const url = pathToFileURL(htmlPath).href + (query ? `?${query}` : '');
+  const url = (/^https?:/.test(htmlPath) ? htmlPath : pathToFileURL(htmlPath).href) + (query ? `?${query}` : '');
   await send('Page.navigate', { url });
 
   async function evaluate(expression, { timeout = 600000 } = {}) {
