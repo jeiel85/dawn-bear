@@ -6,7 +6,7 @@
 **▶ 라이브 데모: https://jeiel85.github.io/dawn-bear/**
 
 > 첫 실행 때 배경을 그리고 사운드트랙을 합성하느라 20~40초쯤 걸립니다(진행 막대가 보입니다). 준비되면 화면을 클릭하세요.
-> 데스크톱 Chrome·Edge에서 확인했습니다. WebGL2와 Web Audio가 필요합니다.
+> 데스크톱 Chrome에서 확인했습니다(Chromium 계열 권장). WebGL2와 Web Audio가 필요하며, Firefox·Safari·모바일은 아직 확인하지 않았습니다.
 
 | | |
 |---|---|
