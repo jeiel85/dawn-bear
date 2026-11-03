@@ -1,0 +1,6 @@
+# render/verification outputs
+*.wav
+*.wav.events.json
+out/
+node_modules/
+*.log
