@@ -6,6 +6,8 @@ function mkLayer(depth, ox = 0, oy = 0, w = W, h = H) {
   const canvas = newCanvas(w + 2 * ox, h + 2 * oy);
   return { canvas, ctx: canvas.getContext('2d'), ox, oy, depth };
 }
+// layer with uneven margins around the frame (left, top, right, bottom)
+function mkLayerR(depth, l, t, r, b) { const canvas = newCanvas(W + l + r, H + t + b); return { canvas, ctx: canvas.getContext('2d'), ox: l, oy: t, depth }; }
 function lp(L, cam, p) { const s = cam.project(p); return [s[0] + L.ox, s[1] + L.oy, s[2]]; }
 // clip a world polygon against the near plane, project into layer pixels
 function clipProj(L, cam, pts, near = 1) {
@@ -137,6 +139,7 @@ function paintBox(P, L, cam, b, env) {
     }
     paintFacade(P, map, {
       floors, bays, col, seed: b.seed + fc.n[0] * 7 + fc.n[2] * 13, style: b.style, top: jag, detail: env.detail,
+      end: b.style === 'apt' && fc.w < Math.max(b.x1 - b.x0, b.z1 - b.z0) * 0.8,
       winDark, winSky, vines: b.vines ?? 0.5, stains: 1.2, amp: 0.7,
       rim: sun > 0.05 && env.sunOn ? { side: v3.dot(fc.n, [SUN_AZ[2], 0, -SUN_AZ[0]]) > 0 ? -1 : 1, col: env.warm, a: 0.35 * (1 - hz), w: 0.025 } : null,
       haze: hz > 0.05 ? [env.haze, hz * 0.5] : null,
@@ -205,13 +208,16 @@ function paintGround(P, L, cam, env, o = {}) {
   }
   // texture strokes along the street direction
   const vp = lp(L, cam, [0, 0, -3000]);
+  const road = clipProj(L, cam, [[-24, 0, zFar], [24, 0, zFar], [24, 0, zNear], [-24, 0, zNear]]);
+  c.save(); if (road.length > 2) { P.path(road); c.clip(); }
   for (let i = 0; i < (o.strokes ?? 1400); i++) {
     const x = r.range(-18, 18), z = r.range(zFar, zNear), p = lp(L, cam, [x, 0, z]);
     if (p[2] < 2) continue;
     const s = 1 / cam.upp(p[2]);
-    const ang = Math.atan2(vp[1] - p[1], vp[0] - p[0]);
-    P.stroke(p[0], p[1], ang, r.range(4, 14) * s, r.range(0.3, 0.9) * s, hazeMix(env, jitterc(r.chance(0.5) ? PAL.asphaltLit : PAL.asphalt, r, 0.15), p[2]), r.range(0.15, 0.35), { bristles: 2 });
+    const ang = Math.atan2(vp[1] - p[1], vp[0] - p[0]), toVp = Math.hypot(vp[0] - p[0], vp[1] - p[1]);
+    P.stroke(p[0], p[1], ang, Math.min(r.range(4, 14) * s, toVp * 0.5), r.range(0.3, 0.9) * s, hazeMix(env, jitterc(r.chance(0.5) ? PAL.asphaltLit : PAL.asphalt, r, 0.15), p[2]), r.range(0.15, 0.35), { bristles: 2 });
   }
+  c.restore();
   // lane markings (faded dashes)
   for (let z = zFar; z < zNear; z += 9) {
     for (const lx of [-0.2, -9.2, 8.8]) {
@@ -297,7 +303,7 @@ function paintSkyFor(L, cam, stops, seed, o = {}) {
   }
   if (o.clouds !== false) {
     const P = new Painter(c, seed + 9);
-    paintAltoField(P, w, top + (o.cloudTop ?? 60), hor[1] - (o.cloudGap ?? 30), o.cloudCols ?? { mid: hex('#9c8db3'), lit: hex('#f2b9a4'), hi: hex('#ffdcb8'), shade: hex('#7b74a0') }, seed + 1, { rows: o.rows ?? 16, big: o.big ?? 50, small: o.small ?? 5, thresh: o.thresh ?? 0.52, lx: o.lx ?? (sp[0] > w / 2 ? 0.3 : -0.3), ly: o.ly ?? 0.9 });
+    paintAltoField(P, w, top + (o.cloudTop ?? 60), hor[1] - (o.cloudGap ?? 30), o.cloudCols ?? { mid: hex('#ad94b6'), lit: hex('#f6bda2'), hi: hex('#ffe0bc'), shade: hex('#7f75a3') }, seed + 1, { rows: o.rows ?? 16, big: o.big ?? 50, small: o.small ?? 5, thresh: o.thresh ?? 0.52, lx: o.lx ?? (sp[0] > w / 2 ? 0.35 : -0.35), ly: o.ly ?? (stops === PAL.dayGold ? -0.75 : 0.9), litBand: stops === PAL.dayGold ? 0.62 : 0.45, hazeTo: gradStops(stops, 0.9) });
   }
   return { hor, sun: sp };
 }

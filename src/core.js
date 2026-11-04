@@ -1,5 +1,6 @@
 // ───────────────────────────── core: constants, seeded randomness, noise, math, color ─────────────────────────────
 const W = 1920, H = 1080, FPS = 24, DURATION = 91, TOTAL_FRAMES = DURATION * FPS;
+const IN_WORKER = typeof document === 'undefined'; // the same script also runs as a background painter (see SCENE.load)
 
 function mulberry32(a) {
   return function () {
@@ -48,6 +49,16 @@ function noise2(x, y) {
   const c = NOISE_VAL[P[P[X] + Y + 1]], d = NOISE_VAL[P[P[X + 1] + Y + 1]];
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
+function noise3(x, y, z) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf), P = NOISE_PERM, V = NOISE_VAL;
+  const X = xi & 255, Y = yi & 255, Z = zi & 255;
+  const g = (a, b, c) => V[P[(P[(P[a] + b) & 511] + c) & 511]];
+  const l = (a, b, t) => a + (b - a) * t;
+  return l(l(l(g(X, Y, Z), g(X + 1, Y, Z), u), l(g(X, Y + 1, Z), g(X + 1, Y + 1, Z), u), v),
+    l(l(g(X, Y, Z + 1), g(X + 1, Y, Z + 1), u), l(g(X, Y + 1, Z + 1), g(X + 1, Y + 1, Z + 1), u), v), w);
+}
+function fbm3(x, y, z, oct = 4) { let s = 0, a = 0.5, n = 0; for (let i = 0; i < oct; i++) { s += a * noise3(x, y, z); n += a; x = x * 2.03 + 5.1; y = y * 2.03 + 1.7; z = z * 2.03 + 3.3; a *= 0.5; } return s / n; }
 function fbm2(x, y, oct = 4) {
   let s = 0, a = 0.5, n = 0;
   for (let i = 0; i < oct; i++) { s += a * noise2(x, y); n += a; x = x * 2.03 + 17.1; y = y * 2.03 + 9.7; a *= 0.5; }

@@ -34,7 +34,7 @@ for (const t of times) {
 if (times.ms) console.log('draw ms: max', Math.max(...times.ms).toFixed(1), 'avg', (times.ms.reduce((a, b) => a + b, 0) / times.ms.length).toFixed(1));
 const errs = page.consoleLog.filter((l) => ['error', 'exception', 'warning'].includes(l.type));
 if (errs.length) console.log('console:', JSON.stringify(errs.slice(0, 10), null, 1));
-const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:'));
+const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:') && !u.startsWith('blob:'));
 console.log(`network (non-file/data): ${ext.length}`, ext.slice(0, 5));
 await page.close();
 process.exit(0);

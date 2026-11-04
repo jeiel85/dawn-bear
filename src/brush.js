@@ -1,5 +1,9 @@
 // ───────────────────────────── brush: gouache painting engine (paper, bristle strokes, wobbly shapes) ─────────────────────────────
-function newCanvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+function newCanvas(w, h) {
+  w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
+  if (IN_WORKER) { const oc = new OffscreenCanvas(w, h); oc.getContext('2d', { willReadFrequently: true }); return oc; } // CPU raster: each worker paints on its own core
+  const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+}
 
 // periodic value noise for tileable textures
 function noise2p(x, y, p) {

@@ -101,7 +101,7 @@ function drawSign(c, cam, B, t) { const q = signQuad(B, t).map((p) => cam.projec
 // sparrow on the robot's left shoulder (world-space perch); returns screen pos
 function perchPoint(B) { return boneP(B, 'shoulderL', [0.6, 2.75, 0.4]); }
 
-const CLOUD_IMGS = [];
+const CLOUD_IMGS = [], CLOUD_CARD_COUNT = 6;
 let PLANET = null, STARS = null;
 
 // ───────── S1 0–7 · extreme wide, slow pan right, fade in ─────────
@@ -110,7 +110,7 @@ shot(0, 7, 'city-wide', {
   camAt(s) { const u = easeInOut(s / 7, 1.6); return C([-6 + 22 * u, 165, -960], [-190 + 215 * u, 22, 0], 34); },
   async paint(Y) {
     const cam = this.cam0, env = ENV.pre();
-    env.hazeDist = 1500; env.detail = 0.8;
+    env.hazeDist = 1500; env.detail = 0.8; env.haze = hex('#a998c4');
     this.sky = mkLayer(9000, 420, 80);
     paintSkyFor(this.sky, cam, PAL.dawnSky, 11, { sunDir: sunDir(-1.5), glowR: 700, glowA: 0.1, span: 1000, rows: 9, big: 180, small: 16, thresh: 0.5 });
     applyPaper(this.sky.canvas, 0.45, 2); await Y();
@@ -151,7 +151,7 @@ shot(0, 7, 'city-wide', {
     drawLayer(c, this.front, cam0, cam);
     drawLayer(c, this.fg, cam0, cam);
     leaves(c, s, 6, 3, [0, 0, W, H], 20, [hex('#4b5a3e'), hex('#6c7a48')]);
-    finishFrame(c, f, { wash: [hex('#b7a2c8'), 0.25], top: [hex('#3b3b78'), 0.22, hex('#f0b8a0'), 0.18], light: [W * 0.78, H * 0.38, 900, hex('#ffd6b4'), 0.18], fade: 1 - smoothstep(0, 2.2, t) });
+    finishFrame(c, f, { wash: [hex('#b7a2c8'), 0.25], top: [hex('#3b3b78'), 0.22, hex('#f0b8a0'), 0.18], light: [W * 0.78, H * 0.38, 900, hex('#ffd6b4'), 0.12], fade: 1 - smoothstep(0, 2.2, t) });
   },
 });
 
@@ -303,7 +303,7 @@ shot(29.2, 31, 'eyes', {
 shot(31, 35.5, 'rooftops', {
   cam0: C([-300, 100, -430], [-300 + 0.45 * 600, 100 - 0.12 * 600, -430 + 0.88 * 600], 44),
   async paint(Y) {
-    const cam = this.cam0, env = ENV.dawn(6); env.hazeDist = 1500; env.detail = 0.9;
+    const cam = this.cam0, env = ENV.dawn(6); env.hazeDist = 1500; env.detail = 0.9; env.haze = hex('#d8b6b0');
     this.sky = mkLayer(9000, 60, 60);
     const sk = paintSkyFor(this.sky, cam, PAL.dayGold, 18, { sunDir: sunDir(6), glowR: 900, glowA: 0.14, rows: 8, big: 190, small: 18, cloudCols: { mid: hex('#c7b2bd'), lit: hex('#ffd9b0'), hi: hex('#fff0d2'), shade: hex('#9b8fae') } });
     this.sunPos = sk.sun;
@@ -311,7 +311,7 @@ shot(31, 35.5, 'rooftops', {
     this.city = mkLayer(400, 60, 60);
     { const P = new Painter(this.city.ctx, 101), hor = sk.hor[1];
       paintSkyline(P, 0, this.city.canvas.width, hor + 6, { seed: 9, wMin: 16, wMax: 46, hMin: 8, hMax: 40, col: hex('#c3a9b0'), win: hex('#dcc3c0'), winA: 0.35, floorPx: 3, broken: 0.3, lit: hex('#ffe0bc'), litA: 0.4, green: 0.25 });
-      paintMist(this.city.ctx, this.city.canvas.width, this.city.canvas.height, hor + 12, 40, hex('#f0d6c6'), 0.5, 21);
+      paintMist(this.city.ctx, this.city.canvas.width, this.city.canvas.height, hor + 12, 40, hex('#f0d6c6'), 0.3, 21);
       await Y();
       paintGround(P, this.city, cam, env, { zNear: 600, strokes: 600, cracks: 30, puddles: 4, trees: false });
       await Y();
@@ -329,7 +329,7 @@ shot(31, 35.5, 'rooftops', {
     const rum = t > 31.3 ? 1 : 0;
     const sh = shake(f, rum * lerp(7, 4, s / 4.5), 6, 1);
     const cam = camShifted(this.cam0, sh[0], sh[1]);
-    drawLayer(c, this.sky, this.cam0, cam); drawLayer(c, this.city, this.cam0, cam); drawLayer(c, this.mist, this.cam0, cam, 0.8);
+    drawLayer(c, this.sky, this.cam0, cam); drawLayer(c, this.city, this.cam0, cam); drawLayer(c, this.mist, this.cam0, cam, 0.45);
     // flocks
     const birdCol = 'rgba(58,44,66,0.92)';
     this.roofs.forEach((rp, i) => {
@@ -344,7 +344,7 @@ shot(31, 35.5, 'rooftops', {
       }
     });
     const sp = this.sunPos;
-    finishFrame(c, f, { wash: [hex('#f6c79a'), 0.22], light: [sp[0] - 60, sp[1] - 60, 1200, hex('#ffd9a8'), 0.32], top: [hex('#ffe0b0'), 0.1, hex('#6d5f8c'), 0.2] });
+    finishFrame(c, f, { wash: [hex('#f6c79a'), 0.22], light: [sp[0] - 60, sp[1] - 60, 1100, hex('#ffd9a8'), 0.18], top: [hex('#ffe0b0'), 0.08, hex('#5d4f80'), 0.26] });
   },
 });
 
@@ -482,7 +482,7 @@ shot(58, 61, 'liftoff', {
   camAt(s) { const y = liftY(onN(s, 1)); const fol = smoothstep(1.3, 2.4, s); return C([17, 2.0, 60], [0, 15 + y * 0.82 * fol + y * 0.25 * (1 - fol), 0], 46); },
   async paint(Y) {
     const cam = this.cam0, env = ENV.dawn(10); env.hazeDist = 420;
-    const mk = (d) => { const L = mkLayer(d, 70, 0); L.canvas.height = H + 1300; L.oy = 1240; L.ctx = L.canvas.getContext('2d'); return L; };
+    const mk = (d) => mkLayerR(d, 70, 580, 70, 60);
     this.sky = mk(9000);
     paintSkyFor(this.sky, cam, PAL.dayGold, 22, { sunDir: sunDir(10), glow: false, rows: 12, big: 160, top: 0 });
     this.city = mk(140);
@@ -538,13 +538,13 @@ shot(61, 64, 'pass-by', {
   async paint(Y) {
     const cam = PASS_CAM, env = ENV.dawn(11); env.hazeDist = 520; env.detail = 0.85;
     this.cam0 = cam;
-    this.sky = mkLayer(9000, 1000, 900);
+    this.sky = mkLayerR(9000, 70, 520, 140, 60);
     paintSkyFor(this.sky, cam, PAL.dayGold, 23, { sunDir: sunDir(11), glowR: 800, glowA: 0.12, rows: 16, big: 170, span: 1800, top: 0 });
     applyPaper(this.sky.canvas, 0.4, 22); await Y();
-    this.city = mkLayer(300, 1000, 900);
+    this.city = mkLayerR(300, 70, 520, 140, 60);
     { const P = new Painter(this.city.ctx, 171); paintGround(P, this.city, cam, env, { zNear: 300, strokes: 1200, cracks: 60 }); await Y(); paintCity(P, this.city, cam, env, { filter: (b) => !(b.x0 < 80 && b.x1 > 40 && b.z0 < 140 && b.z1 > 100) }); }
     applyPaper(this.city.canvas, 0.4, 23); await Y();
-    this.fg = mkLayer(12, 1000, 900);
+    this.fg = mkLayerR(12, 70, 520, 140, 60);
     { const L = this.fg, P = new Painter(L.ctx, 181), w = L.canvas.width, h = L.canvas.height;
       const y0 = lp(L, cam, [58, 61, 118])[1];
       P.shape([[0, y0 + 40], [w, y0 - 30], [w, h], [0, h]], hex('#6a6070'), { angle: 0, density: 0.002, len: [20, 70], sw: [3, 8], edgeA: 0.5 });
@@ -592,7 +592,7 @@ shot(64, 68.5, 'follow', {
     for (let i = 0; i < 46; i++) {
       const tt = 63.6 + r.f() * 5.6, along = climbPos(tt);
       const side = r.range(-260, -60);
-      this.cards.push({ p: v3.add(along, [side, r.range(-140, 140), r.range(-120, 120)]), img: r.int(0, CLOUD_IMGS.length - 1), size: r.range(80, 220) });
+      this.cards.push({ p: v3.add(along, [side, r.range(-140, 140), r.range(-120, 120)]), img: r.int(0, CLOUD_CARD_COUNT - 1), size: r.range(80, 220) });
     }
   },
   draw(c, s, t, f) {
@@ -624,7 +624,7 @@ shot(68.5, 72, 'cloud-punch', {
   camAt(s) { return C([70, 2890, 210], v3.lerp([0, 2840, 0], punchPos(this.t0 + s), 0.75 * smoothstep(0.1, 1.3, s)), 44); },
   async paint(Y) {
     const cam = this.cam0;
-    this.deck = mkLayer(700, 120, 500); this.deck.canvas.height = H + 1000;
+    this.deck = mkLayerR(700, 120, 900, 200, 500);
     { const c = this.deck.ctx, w = this.deck.canvas.width, h = this.deck.canvas.height, P = new Painter(c, 191);
       const hor = lp(this.deck, cam, v3.add(cam.pos, [cam.fwd[0] * 9000, 0, cam.fwd[2] * 9000]))[1];
       paintSky(c, w, h, [[0, hex('#0b1030')], [0.5, hex('#1c2f6a')], [0.8, hex('#5379b6')], [0.95, hex('#bcd0e8')], [1, hex('#f2e2c8')]], 26, { y0: 0, y1: hor + 30 });
@@ -651,12 +651,36 @@ shot(68.5, 72, 'cloud-punch', {
     { const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#070a20'); g.addColorStop(1, '#22397a'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
     drawLayer(c, this.deck, this.cam0, cam);
     const hp = cam.project(PUNCH), open = smoothstep(0.0, 0.9, s);
-    if (open > 0) { // the torn hole and its swirl
+    if (open > 0) { // the torn hole: shadowed walls, swirling streaks, ragged rim, fragments flung up after the robot
       const R = 46 * open / cam.upp(hp[2]);
       c.save(); c.translate(hp[0], hp[1]); c.scale(1, 0.34);
-      c.fillStyle = 'rgba(70,90,150,0.85)'; c.beginPath(); c.arc(0, 0, R, 0, 6.3); c.fill();
-      for (let i = 0; i < 18; i++) { const a = i / 18 * 6.28 + s * 1.4, rr = R * (1.05 + 0.25 * hashi(i, 3)); c.fillStyle = i % 2 ? 'rgba(255,252,246,0.92)' : 'rgba(196,208,232,0.9)'; c.beginPath(); c.ellipse(Math.cos(a) * rr, Math.sin(a) * rr, R * 0.32, R * 0.16, a + 1.2, 0, 6.3); c.fill(); }
+      const g = c.createRadialGradient(0, R * 0.2, R * 0.05, 0, 0, R);
+      g.addColorStop(0, 'rgba(30,44,96,0.96)'); g.addColorStop(0.65, 'rgba(66,88,152,0.92)'); g.addColorStop(1, 'rgba(150,170,214,0.88)');
+      c.fillStyle = g; c.beginPath();
+      for (let k = 0; k <= 40; k++) { const a = k / 40 * Math.PI * 2, rr = R * (1 + (noise2(k * 0.6, 3.7) - 0.5) * 0.22); k ? c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      c.fill();
+      c.fillStyle = 'rgba(200,214,240,0.55)'; c.beginPath(); c.ellipse(0, -R * 0.55, R * 0.82, R * 0.32, 0, Math.PI, Math.PI * 2); c.fill(); // the lit far wall
+      c.lineCap = 'round';
+      for (let i = 0; i < 16; i++) {
+        const a0 = i / 16 * Math.PI * 2 + s * 1.2 * (1 + 0.3 * hashi(i, 1)), rr = R * (0.95 + 0.4 * hashi(i, 2));
+        c.strokeStyle = i % 3 ? 'rgba(255,252,246,0.85)' : 'rgba(205,216,238,0.85)'; c.lineWidth = R * 0.07 * (0.5 + hashi(i, 4));
+        c.beginPath(); c.arc(0, 0, rr, a0, a0 + 0.4 + hashi(i, 3) * 0.7); c.stroke();
+      }
+      for (let i = 0; i < 20; i++) {
+        const a = i / 20 * Math.PI * 2 + s * 1.4, rr = R * (1.05 + 0.25 * hashi(i, 3)), pr = R * (0.18 + 0.14 * hashi(i, 6));
+        c.fillStyle = 'rgba(176,192,224,0.92)'; c.beginPath(); c.ellipse(Math.cos(a) * rr, Math.sin(a) * rr, pr * 1.8, pr, a + 1.2, 0, 6.3); c.fill();
+        c.fillStyle = 'rgba(255,252,246,0.95)'; c.beginPath(); c.ellipse(Math.cos(a) * rr - pr * 0.2, Math.sin(a) * rr - pr * 0.35, pr * 1.3, pr * 0.65, a + 1.2, 0, 6.3); c.fill();
+      }
       c.restore();
+      for (let i = 0; i < 18; i++) {
+        const tt = s - 0.05 - hashi(i, 5) * 0.3; if (tt < 0 || tt > 1.5) continue;
+        const wp = v3.add(PUNCH, [(hashi(i, 6) - 0.5) * 70 * (1 + tt), tt * (18 + hashi(i, 7) * 26) - 6 * tt * tt, (hashi(i, 8) - 0.5) * 70 * (1 + tt)]);
+        const p = cam.project(wp); if (p[2] < 1) continue;
+        const pr = (2 + hashi(i, 9) * 3.5) * (1 + tt * 0.5) * smoothstep(1.5, 0.9, tt) / cam.upp(p[2]); // swell, then break up
+        if (pr < 0.5) continue;
+        c.globalAlpha = 1; c.fillStyle = 'rgb(196,208,232)'; c.beginPath(); c.arc(p[0], p[1], pr, 0, 6.3); c.fill();
+        c.fillStyle = 'rgb(255,252,246)'; c.beginPath(); c.arc(p[0] - pr * 0.2, p[1] - pr * 0.3, pr * 0.7, 0, 6.3); c.fill(); c.globalAlpha = 1;
+      }
     }
     const tq = onN(t, 1);
     const trail = []; for (let k = 0; k <= 30; k++) { const tt = tq - 1.2 + k * 0.04; if (tt > 68.52) trail.push(cam.project(punchPos(tt))); }
@@ -707,7 +731,9 @@ shot(79, 86, 'space-wide', {
     const trail = []; for (let k = 0; k <= 30; k++) { const ss = s - 2 + k * 0.066; trail.push(cam.project([lerp(-28, 10, ss / 7) - 6, 2 + Math.sin(ss * 0.6) * 0.3 - 2, 0])); }
     lightTrail(c, trail.map((q) => [q[0], q[1]]), 10, hex('#ffd7a0'), hex('#fff7ea'), 0.9);
     const pose = poseFly(p, { pitch: 78, yaw: 82, bank: -4 }, { tuck: 0.8, headPitch: -40 });
-    drawRobot(c, cam, pose, { light: LIGHT.space(), lineW: 1.15, eyeGlow: 1.3, chestGlow: 1, engine: 0.5, boil: f >> 1 });
+    const Ls = LIGHT.space(), toSun = v3.norm(v3.sub(cam.unproject(sun[0], sun[1], 2000), cam.pos));
+    Object.assign(Ls, { sunDir: toSun, rimDir: toSun, rimCol: [1, 0.86, 0.62], rimOn: 1, amb: [0.7, 0.68, 1.05] });
+    drawRobot(c, cam, pose, { light: Ls, lineW: 1.15, eyeGlow: 1.3, chestGlow: 1, engine: 0.5, boil: f >> 1 });
     finishFrame(c, f, { wash: [hex('#8090d0'), 0.1], light: [sun[0], sun[1], 1400, hex('#ffd9a0'), 0.2], vigCol: [30, 30, 60], grain: 0.06, fade: smoothstep(84, 86, t) });
   },
 });
@@ -731,16 +757,15 @@ function drawPlanet(c, cx, cy, R, rot, s, glowK) {
   c.restore();
 }
 function paintPlanet() {
-  const n = 1400, cv = newCanvas(n, n), c = cv.getContext('2d'), img = c.createImageData(n, n), d = img.data;
+  const n = 1000, cv = newCanvas(n, n), c = cv.getContext('2d'), img = c.createImageData(n, n), d = img.data;
   const sun = v3.norm([0.85, -0.2, 0.5]);
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const x = i / n * 2 - 1, y = j / n * 2 - 1, rr = x * x + y * y; if (rr > 1) continue;
     const z = Math.sqrt(1 - rr), k = (j * n + i) * 4;
-    const lon = Math.atan2(x, z) * 1.3, lat = y;
-    const land = fbm2(lon * 2.2 + 4, lat * 3.1 + 2, 5) - 0.04 * Math.abs(lat * 3);
-    let col = land > 0.56 ? mixc(hex('#a49264'), hex('#5f7f4a'), clamp((land - 0.56) * 6)) : mixc(hex('#1f4a8a'), hex('#2f6aae'), clamp(land * 1.6));
-    const cl = fbm2(lon * 3.5 + lat * 2 + 20, lat * 7 + 9, 5);
-    col = mixc(col, hex('#f2f4fa'), smoothstep(0.55, 0.72, cl) * 0.92);
+    const land = fbm3(x * 1.9 + 7, y * 1.9 + 3, z * 1.9, 5) - 0.03 * Math.abs(y * 3);
+    let col = land > 0.57 ? mixc(hex('#b39a68'), hex('#5f8048'), clamp((0.66 - land) * 9)) : mixc(hex('#1c4688'), hex('#3577b8'), clamp((land - 0.3) * 3));
+    const swirl = fbm3(x * 3.2 + y * 1.5 + 20, y * 6.5 + 9, z * 3.2, 4);
+    col = mixc(col, hex('#f3f5fb'), smoothstep(0.56, 0.7, swirl) * 0.92);
     const ndl = x * sun[0] + -y * sun[1] + z * sun[2];
     const lit = smoothstep(-0.12, 0.25, ndl);
     col = mixc(mixc(hex('#0b1236'), hex('#2a2a6a'), clamp(ndl + 0.4)), col, lit);
@@ -751,40 +776,102 @@ function paintPlanet() {
   c.putImageData(img, 0, 0);
   const P = new Painter(c, 300); // brushed cloud streaks
   c.save(); c.beginPath(); c.arc(n / 2, n / 2, n / 2, 0, 6.3); c.clip();
-  for (let i = 0; i < 700; i++) { const x = P.r.range(0, n), y = P.r.range(0, n); P.stroke(x, y, P.r.range(-0.3, 0.3), P.r.range(40, 160), P.r.range(3, 10), hex('#f6f8ff'), P.r.range(0.05, 0.16), { bristles: 3 }); }
+  for (let i = 0; i < 500; i++) { const x = P.r.range(0, n), y = P.r.range(0, n); P.stroke(x, y, P.r.range(-0.3, 0.3), P.r.range(30, 120), P.r.range(2, 8), hex('#f6f8ff'), P.r.range(0.05, 0.14), { bristles: 3 }); }
   c.restore();
   applyPaper(cv, 0.35, 30);
   return cv;
 }
 
+// shop signs used on old buildings (each painting context makes its own copy)
+function setupSigns() {
+  const signs = [['세탁', '#3b5e8f'], ['식당', '#a5473b'], ['여관', '#6b4f8a'], ['수리', '#8a6b2f'], ['철물', '#3f7a5a'], ['약국', '#3f8a6c']].map(([tx, bg], i) => makeSign(tx, { w: 300, h: 90, bg: hex(bg), fg: hex('#f2eee2'), seed: 40 + i }));
+  for (const k of ['pre', 'dawn']) { const f = ENV[k]; ENV[k] = (...a) => Object.assign(f(...a), { signs }); }
+}
+function paintCommonAssets() {
+  const clouds = [];
+  for (let i = 0; i < CLOUD_CARD_COUNT; i++) { // flight cloud cards
+    const cv = newCanvas(820, 520), P = new Painter(cv.getContext('2d'), 600 + i);
+    paintCumulus(P, 410, 440, 560, 230, { mid: hex('#e9eef7'), lit: hex('#fffaf0'), hi: hex('#fff3dc'), shade: hex('#a9b6d4'), base: hex('#b3bfd9') }, 600 + i, { lx: 0.55, ly: -0.75 });
+    applyPaper(cv, 0.35, 40 + i); clouds.push(cv);
+  }
+  const stars = newCanvas(W + 400, H + 240); paintStars(stars.getContext('2d'), stars.width, stars.height, 77, { n: 2400 });
+  return { SIGN_IMG: makeSign('약국', { w: 360, h: 260, bg: hex('#3f8a6c'), fg: hex('#f4f1e6'), cross: true, seed: 33 }), CLOUD_IMGS: clouds, STARS: stars, PLANET: paintPlanet() };
+}
+function applyCommonAssets(a) { SIGN_IMG = a.SIGN_IMG; CLOUD_IMGS.length = 0; CLOUD_IMGS.push(...a.CLOUD_IMGS); STARS = a.STARS; PLANET = a.PLANET; }
+// a painted shot crosses the worker boundary as plain data + ImageBitmaps
+function packShot(sh) {
+  const out = {}, transfer = [];
+  for (const [k, v] of Object.entries(sh)) {
+    if (k === 't0' || k === 't1' || k === 'name' || typeof v === 'function') continue;
+    if (v && v.canvas && 'ox' in v) { const bmp = v.canvas.transferToImageBitmap(); out[k] = { __layer: 1, bmp, ox: v.ox, oy: v.oy, depth: v.depth }; transfer.push(bmp); }
+    else if (v instanceof Cam) out[k] = { __cam: [v.pos, v.target, v.fov, v.roll, v.shift] };
+    else out[k] = v;
+  }
+  return { out, transfer };
+}
+function unpackShot(sh, out) {
+  for (const [k, v] of Object.entries(out)) sh[k] = v && v.__layer ? { canvas: v.bmp, ox: v.ox, oy: v.oy, depth: v.depth } : v && v.__cam ? new Cam(...v.__cam) : v;
+}
+// rough paint cost per task, so the slowest ones start first
+const PAINT_COST = { 'pass-by': 10, 'city-wide': 6, 'cloud-punch': 6, rooftops: 5, liftoff: 3, common: 2, sparrow: 2, 'look-up': 2, ignite: 2, rise: 2, 'kneel-tilt': 1.5 };
+
 const SCENE = {
   async load(progress, Y) {
-    const T0 = performance.now();
+    const T0 = performance.now(), mark = (l) => DEBUG && console.log(`load ${l}: ${((performance.now() - T0) / 1000).toFixed(1)} s`);
     grainInit();
     ROBOT = new RobotRenderer(buildBear());
-    SIGN_IMG = makeSign('약국', { w: 360, h: 260, bg: hex('#3f8a6c'), fg: hex('#f4f1e6'), cross: true, seed: 33 });
-    const signs = [['세탁', '#3b5e8f'], ['식당', '#a5473b'], ['여관', '#6b4f8a'], ['수리', '#8a6b2f'], ['철물', '#3f7a5a'], ['약국', '#3f8a6c']].map(([tx, bg], i) => makeSign(tx, { w: 300, h: 90, bg: hex(bg), fg: hex('#f2eee2'), seed: 40 + i }));
-    for (const k of ['pre', 'dawn']) { const f = ENV[k]; ENV[k] = (...a) => Object.assign(f(...a), { signs }); }
-    for (let i = 0; i < 6; i++) { // flight cloud cards
-      const cv = newCanvas(820, 520), P = new Painter(cv.getContext('2d'), 600 + i);
-      paintCumulus(P, 410, 440, 560, 230, { mid: hex('#e9eef7'), lit: hex('#fffaf0'), hi: hex('#fff3dc'), shade: hex('#a9b6d4'), base: hex('#b3bfd9') }, 600 + i, { lx: 0.55, ly: -0.75 });
-      applyPaper(cv, 0.35, 40 + i); CLOUD_IMGS.push(cv);
+    setupSigns();
+    mark('robot + signs');
+    const order = ['common', ...SHOTS.map((_, i) => i)].sort((a, b) => (PAINT_COST[typeof b === 'number' ? SHOTS[b].name : b] ?? 0.5) - (PAINT_COST[typeof a === 'number' ? SHOTS[a].name : a] ?? 0.5));
+    const done = new Set();
+    const tick = (id) => { done.add(id); progress(done.size / order.length, `그림을 그리는 중… ${done.size}/${order.length}`); };
+    if (!Q.has('noworker') && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try { await this.paintParallel(order, tick); mark('parallel painting'); }
+      catch (e) { if (DEBUG) console.log('parallel painting failed, painting on the main thread:', e.message); }
     }
-    if (DEBUG) console.log(`paint common: ${(performance.now() - T0).toFixed(0)} ms`);
-    STARS = newCanvas(W + 400, H + 240); paintStars(STARS.getContext('2d'), STARS.width, STARS.height, 77, { n: 2400 });
-    PLANET = paintPlanet();
-    await Y();
-    for (let i = 0; i < SHOTS.length; i++) {
-      progress(i / SHOTS.length, `그림을 그리는 중… ${i + 1}/${SHOTS.length}`);
+    for (const id of order) { // main-thread path (no workers, or whatever the workers did not finish)
+      if (done.has(id)) continue;
       await Y();
-      const t0 = performance.now();
-      await SHOTS[i].paint.call(SHOTS[i], Y);
-      if (DEBUG) console.log(`paint ${SHOTS[i].name}: ${(performance.now() - t0).toFixed(0)} ms`);
+      if (id === 'common') applyCommonAssets(paintCommonAssets());
+      else await SHOTS[id].paint.call(SHOTS[id], Y);
+      tick(id);
     }
+    mark('main-thread painting');
     await titleInit();
+    mark('title');
     // warm-up: draw each shot once so shaders compile and painted layers reach the GPU before playback
     for (const sh of SHOTS) { this.draw(vctx, (sh.t0 + sh.t1) / 2, Math.floor((sh.t0 + sh.t1) / 2 * FPS)); await Y(); }
+    mark('warm-up');
     progress(1);
+  },
+  // paint shots in background workers created from this very script (a blob: URL, no network)
+  paintParallel(order, tick) {
+    const url = URL.createObjectURL(new Blob([document.getElementById('film').textContent], { type: 'text/javascript' }));
+    // leave cores for the three audio render threads that run at the same time
+    const n = clamp((navigator.hardwareConcurrency || 4) - 4, 2, 6), queue = order.slice(), workers = [];
+    return new Promise((resolve, reject) => {
+      let idle = 0, failed = false;
+      const finish = () => { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); };
+      const fail = (err) => { if (failed) return; failed = true; finish(); reject(err); };
+      const next = (w) => {
+        const id = queue.shift();
+        if (id === undefined) { if (++idle === workers.length) { finish(); resolve(); } return; }
+        w.postMessage(id);
+      };
+      for (let i = 0; i < n; i++) {
+        const w = new Worker(url);
+        workers.push(w);
+        w.onmessage = (e) => {
+          const m = e.data;
+          if (m.error) return fail(new Error(m.error));
+          if (DEBUG) console.log(`  worker task ${m.id === 'common' ? 'common' : SHOTS[m.id].name}: ${m.ms ?? '?'} ms`);
+          if (m.id === 'common') applyCommonAssets(m.res); else unpackShot(SHOTS[m.id], m.out);
+          tick(m.id); next(w);
+        };
+        w.onerror = (e) => { e.preventDefault(); fail(new Error(e.message || 'worker error')); };
+      }
+      workers.forEach(next);
+    });
   },
   draw(c, t, f) {
     c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';

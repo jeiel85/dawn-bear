@@ -206,9 +206,10 @@ function roar(K, pts, o = {}) {
 // Events are queued at build time and realized ~1.5 s ahead of the render position (see renderSoundtrack),
 // so the live graph only holds what is sounding now; the output is identical to building everything up front.
 function lazy(fn, tOf = (args) => args[0]) {
+  const tag = fn.name;
   return function (K, ...args) {
     if (K.building) return fn(K, ...args);
-    K.queue.push({ t: tOf(args), run: () => fn(K, ...args) });
+    K.queue.push({ t: tOf(args), tag, run: () => fn(K, ...args) });
   };
 }
 noiseHit = lazy(noiseHit); tone = lazy(tone); piano = lazy(piano); strings = lazy(strings); horn = lazy(horn);
@@ -386,15 +387,13 @@ function master(buf) {
 }
 const MASTER_DB = 0.6;
 
-async function renderSoundtrack() {
-  SOUND_EVENTS.length = 0;
+// One part of the score rendered in its own OfflineAudioContext (its own audio thread). Buses, reverbs and the
+// later mastering are linear, so rendering groups apart and summing them equals rendering them together.
+async function renderPart(build, keep) {
   const ctx = new OfflineAudioContext(2, SR * DURATION, SR);
   const K = audioKit(ctx);
-  const stem = typeof Q !== 'undefined' ? Q.get('stem') : null; // debug: render one group alone, unmastered
-  if (!stem || stem === 'amb') buildAmbience(K);
-  if (!stem || stem === 'sfx') buildSfx(K);
-  if (!stem || stem === 'music') buildMusic(K);
-  const Qe = K.queue.sort((a, b) => a.t - b.t), live = [];
+  build(K);
+  const Qe = K.queue.filter(keep).sort((a, b) => a.t - b.t), live = [];
   let qi = 0;
   const realize = (until) => {
     while (qi < Qe.length && Qe[qi].t < until) {
@@ -409,8 +408,26 @@ async function renderSoundtrack() {
   const STEP = 1, AHEAD = 1.5;
   realize(AHEAD);
   for (let T = STEP; T < DURATION; T += STEP) ctx.suspend(T).then(() => { cull(T); realize(T + AHEAD); ctx.resume(); });
-  const buf = await ctx.startRendering();
-  if (!stem) master(buf);
-  SOUND_EVENTS.sort((a, b) => a.t - b.t);
-  return buf;
+  return ctx.startRendering();
+}
+
+async function renderSoundtrack() {
+  SOUND_EVENTS.length = 0;
+  const stem = typeof Q !== 'undefined' ? Q.get('stem') : null; // debug: render one group alone, unmastered
+  const parts = [];
+  if (!stem || stem === 'amb' || stem === 'sfx') parts.push(renderPart((K) => { if (stem !== 'sfx') buildAmbience(K); if (stem !== 'amb') buildSfx(K); }, () => true));
+  if (!stem || stem === 'music') {
+    parts.push(renderPart(buildMusic, (e) => e.tag === 'strings'));
+    parts.push(renderPart(buildMusic, (e) => e.tag !== 'strings'));
+  }
+  const bufs = await Promise.all(parts);
+  const out = new AudioBuffer({ length: SR * DURATION, numberOfChannels: 2, sampleRate: SR });
+  for (let ch = 0; ch < 2; ch++) {
+    const o = out.getChannelData(ch);
+    for (const b of bufs) { const d = b.getChannelData(ch); for (let i = 0; i < o.length; i++) o[i] += d[i]; }
+  }
+  if (!stem) master(out);
+  const seen = new Set(), uniq = SOUND_EVENTS.filter((e) => { const k = e.t + e.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  SOUND_EVENTS.length = 0; SOUND_EVENTS.push(...uniq.sort((a, b) => a.t - b.t));
+  return out;
 }

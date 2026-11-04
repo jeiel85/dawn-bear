@@ -11,6 +11,6 @@ let fc = files.map((_, i) => `[${i}]scale=${w}:${h}[s${i}]`).join(';');
 for (let i = n; i < rows * c; i++) fc += `;color=black:s=${w}x${h}[s${i}]`;
 fc += ';' + Array.from({ length: rows * c }, (_, i) => `[s${i}]`).join('') + `xstack=inputs=${rows * c}:layout=` +
   Array.from({ length: rows * c }, (_, i) => `${(i % c) * w}_${Math.floor(i / c) * h}`).join('|');
-args.push('-filter_complex', fc, join(out || join(dir, 'sheet.png')));
+args.push('-filter_complex', fc, '-frames:v', '1', join(out || join(dir, 'sheet.png')));
 execFileSync('ffmpeg', args, { stdio: 'inherit' });
 console.log('sheet', files.length, 'frames');

@@ -25,7 +25,7 @@ const n = inputs.length, cols = 8, rows = Math.ceil(n / cols);
 let fc = inputs.map(([, x, y, s], i) => `[${i}]pad=iw+4000:ih+4000:2000:2000,crop=${s}:${s}:${x + 2000}:${y + 2000},scale=240:240[s${i}]`).join(';');
 for (let i = n; i < rows * cols; i++) fc += `;color=black:s=240x240[s${i}]`;
 fc += ';' + Array.from({ length: rows * cols }, (_, i) => `[s${i}]`).join('') + `xstack=inputs=${rows * cols}:layout=` + Array.from({ length: rows * cols }, (_, i) => `${(i % cols) * 240}_${Math.floor(i / cols) * 240}`).join('|');
-args.push('-filter_complex', fc, out);
+args.push('-filter_complex', fc, '-frames:v', '1', out);
 execFileSync('ffmpeg', args, { stdio: 'inherit' });
 console.log('wrote', out);
 process.exit(0);

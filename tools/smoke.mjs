@@ -25,6 +25,7 @@ await key('Space', ' '); await new Promise((r) => setTimeout(r, 1000));
 console.log('resumed, t =', await now());
 const errs = page.consoleLog.filter((l) => ['error', 'exception', 'warning'].includes(l.type));
 console.log('console errors/warnings:', errs.length ? errs : 'none');
-const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:') && u.split('?')[0] !== target && !u.endsWith('/favicon.ico'));
+// blob: URLs are the in-memory worker scripts made from the page itself, not network traffic
+const ext = page.network.filter((u) => !u.startsWith('file:') && !u.startsWith('data:') && !u.startsWith('blob:') && u.split('?')[0] !== target && !u.endsWith('/favicon.ico'));
 console.log('requests:', page.network.length, '| besides the page itself:', ext.length ? ext : 'none');
 await page.close(); process.exit(0);

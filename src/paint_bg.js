@@ -73,23 +73,79 @@ function cloudlet(P, x, y, w, h, cols, seed, o = {}) {
   if (hi) for (const p of puffs) if (r.chance(0.6)) disc(p[0] + lx * p[2] * 0.55, p[1] + ly * p[2] * 0.55, p[2] * 0.36, hi);
   c.restore(); c.globalAlpha = 1;
 }
-// dawn altocumulus field in perspective: big cloudlets high, tiny near the horizon
+// a painted cel cloud: lobes merged into one silhouette, a lit band that follows the silhouette,
+// a highlight rim, a shaded core, faint inner lobe edges, brush texture and a slightly dissolving base
+function paintCloudMass(ctx, x, y, w, h, cols, seed, o = {}) {
+  const r = makeRng(seed), lx = o.lx ?? 0.3, ly = o.ly ?? 0.95, ln = Math.hypot(lx, ly) || 1, Lx = lx / ln, Ly = ly / ln;
+  const pad = Math.ceil(h * 0.5 + 6), cw = Math.ceil(w * 1.15 + pad * 2), ch = Math.ceil(h * 1.5 + pad * 2);
+  const ox = cw / 2, oy = ch - pad;
+  const M = newCanvas(cw, ch), m = M.getContext('2d');
+  const lobes = [], n = Math.max(4, Math.round(w / h * 2.6));
+  for (let i = 0; i < n; i++) {
+    const u = (i + 0.15 + r.f() * 0.7) / n, prof = Math.pow(Math.sin(Math.PI * u), 0.75);
+    const rad = h * (0.2 + 0.36 * prof) * r.range(0.8, 1.2);
+    lobes.push([ox + (u - 0.5) * w, oy - rad * 0.75 * prof - h * 0.22 * prof * r.f(), rad]);
+  }
+  for (let k = 0; k < n * 0.9; k++) { const b = r.pick(lobes), a = r.range(-Math.PI * 0.92, -Math.PI * 0.08); lobes.push([b[0] + Math.cos(a) * b[2] * 0.72, b[1] + Math.sin(a) * b[2] * 0.68, b[2] * r.range(0.32, 0.58)]); }
+  m.fillStyle = '#fff';
+  for (const l of lobes) { m.beginPath(); m.arc(l[0], l[1], l[2], 0, Math.PI * 2); m.fill(); }
+  // flat, slightly wavy base
+  m.globalCompositeOperation = 'destination-out'; m.beginPath(); m.moveTo(0, ch);
+  for (let i = 0; i <= 24; i++) { const xx = i / 24 * cw; m.lineTo(xx, oy + h * 0.04 + (noise2(i * 0.7 + seed, 1.3) - 0.5) * h * 0.06); }
+  m.lineTo(cw, ch); m.closePath(); m.fill(); m.globalCompositeOperation = 'source-over';
+  const band = (d, sign, col, alpha) => { // part of the silhouette within d of the edge facing (sign · light)
+    const T = newCanvas(cw, ch), t = T.getContext('2d');
+    t.drawImage(M, 0, 0); t.globalCompositeOperation = 'destination-out'; t.drawImage(M, -sign * d * Lx, -sign * d * Ly);
+    t.globalCompositeOperation = 'source-in'; t.fillStyle = css(col); t.fillRect(0, 0, cw, ch);
+    C.globalAlpha = alpha; C.drawImage(T, 0, 0); C.globalAlpha = 1;
+  };
+  const Cv = newCanvas(cw, ch), C = Cv.getContext('2d');
+  const g = C.createLinearGradient(0, oy - h * 1.2, 0, oy); g.addColorStop(0, css(cols.mid)); g.addColorStop(1, css(cols.shade ?? cols.mid));
+  C.fillStyle = g; C.fillRect(0, 0, cw, ch);
+  C.globalCompositeOperation = 'destination-in'; C.drawImage(M, 0, 0); C.globalCompositeOperation = 'source-atop';
+  // inner lobe edges: a faint lit crescent on some lobes shows the heap's structure
+  for (const l of lobes) if (r.chance(0.5)) { // soft shading toward each lobe's lit side
+    const gg = C.createRadialGradient(l[0] + Lx * l[2] * 0.4, l[1] + Ly * l[2] * 0.4, 0, l[0] + Lx * l[2] * 0.4, l[1] + Ly * l[2] * 0.4, l[2] * 1.1);
+    gg.addColorStop(0, css(cols.lit, 0.32)); gg.addColorStop(1, css(cols.lit, 0));
+    C.fillStyle = gg; C.fillRect(l[0] - l[2] * 2, l[1] - l[2] * 2, l[2] * 4, l[2] * 4);
+  }
+  C.globalAlpha = 1; C.globalCompositeOperation = 'source-over';
+  band(h * (o.litBand ?? 0.38), 1, cols.lit, 1);
+  if (cols.hi) band(h * 0.07, 1, cols.hi, 0.9);
+  band(h * 0.22, -1, shadec(cols.shade ?? cols.mid, 0.9), 0.45);
+  // brush texture inside the silhouette
+  C.globalCompositeOperation = 'source-atop';
+  const P = new Painter(C, seed + 7);
+  for (let i = 0; i < Math.min(90, w * h / 900); i++) {
+    const px = ox + r.range(-0.5, 0.5) * w, py = oy - r.f() * h * 1.1;
+    P.stroke(px, py, r.range(-0.25, 0.25), r.range(0.1, 0.35) * w, r.range(0.03, 0.08) * h, r.chance(0.5) ? cols.mid : cols.lit, r.range(0.06, 0.16), { bristles: 3, cj: 0.06 });
+  }
+  // dissolve the base a little
+  C.globalCompositeOperation = 'destination-out';
+  const fg = C.createLinearGradient(0, oy - h * 0.25, 0, oy + h * 0.05); fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,0.45)');
+  C.fillStyle = fg; C.fillRect(0, oy - h * 0.25, cw, h * 0.4);
+  C.globalCompositeOperation = 'source-over';
+  ctx.save(); ctx.globalAlpha = (o.alpha ?? 1) * 0.5; ctx.filter = `blur(${Math.max(1, h * 0.03).toFixed(1)}px)`;
+  ctx.drawImage(Cv, x - ox, y - oy); ctx.filter = 'none'; ctx.globalAlpha = o.alpha ?? 1;
+  ctx.drawImage(Cv, x - ox, y - oy); ctx.restore();
+}
+// a field of clouds in perspective: big ones high, small and hazier toward the horizon, clustered by noise
 function paintAltoField(P, w, yTop, yHor, cols, seed, o = {}) {
-  const r = makeRng(seed), rows = o.rows ?? 18;
-  for (let i = rows - 1; i >= 0; i--) {
-    const k = i / (rows - 1), y = yTop + (yHor - yTop) * Math.pow(k, 1.6);
-    const s = lerp(o.big ?? 46, o.small ?? 5, Math.pow(k, 0.8));
-    let x = -s * 4 * r.f();
-    while (x < w + s * 4) {
-      const cw = s * r.range(2.5, 6.5);
-      const cover = fbm2(x * 0.0018 + seed, y * 0.008 + seed * 0.3, 3);
-      if (cover > (o.thresh ?? 0.5)) {
-        const fade = lerp(1, 0.55, k);
-        const cc = o.hazeTo ? { shade: mixc(cols.shade, o.hazeTo, k * 0.6), mid: mixc(cols.mid, o.hazeTo, k * 0.55), lit: mixc(cols.lit, o.hazeTo, k * 0.35), hi: cols.hi } : cols;
-        cloudlet(P, x + cw / 2, y + r.range(-s, s) * 1.1, cw, s, cc, seed * 31 + i * 97 + Math.round(x), { lx: o.lx ?? 0.2, ly: o.ly ?? 1, alpha: fade });
-        x += cw * r.range(1.05, 1.6);
-      } else x += s * r.range(2, 4);
-    }
+  const r = makeRng(seed), count = Math.round((o.rows ?? 14) * 2.6), placed = [];
+  for (let i = 0; i < count * 6 && placed.length < count; i++) {
+    const k = Math.pow(r.f(), 0.85), y = yTop + (yHor - yTop) * Math.pow(k, 1.35);
+    const band = r.chance(0.4); // long stratocumulus band vs. a heap
+    const s = lerp(o.big ?? 46, o.small ?? 6, Math.pow(k, 0.8)) * r.range(0.65, 1.3) * (band ? 0.6 : 1);
+    const cw = s * (band ? r.range(4.5, 9) : r.range(1.7, 3.6)), x = r.range(-cw * 0.4, w + cw * 0.4);
+    if (fbm2(x * 0.0016 + seed, y * 0.005 + seed * 0.3, 3) < (o.thresh ?? 0.5) - 0.06) continue;
+    if (placed.some((q) => Math.abs(q.x - x) < (q.w + cw) * 0.36 && Math.abs(q.y - y) < (q.h + s) * 0.45)) continue;
+    placed.push({ x, y, w: cw, h: s, k });
+  }
+  placed.sort((a, b) => b.k - a.k);
+  for (const q of placed) {
+    const hz = o.hazeTo ? q.k * 0.6 : 0;
+    const cc = hz ? { shade: mixc(cols.shade, o.hazeTo, hz), mid: mixc(cols.mid, o.hazeTo, hz), lit: mixc(cols.lit, o.hazeTo, hz * 0.6), hi: cols.hi } : cols;
+    paintCloudMass(P.c, q.x, q.y, q.w, q.h, cc, seed * 31 + Math.round(q.x * 7 + q.y), { lx: o.lx ?? 0.2, ly: o.ly ?? 1, alpha: lerp(1, 0.7, q.k), litBand: o.litBand });
   }
 }
 // a cumulus heap: many puffs, flat-ish base, lit from (lx, ly)
@@ -154,87 +210,122 @@ function paintSkyline(P, x0, x1, baseY, o) {
 }
 
 // ── facades in perspective ──
-// map(u,v) → screen; u: left→right, v: top→bottom. o: {floors,bays,col,seed,style,top(u)->v,lightK,winDark,winSky,detail,vines,haze}
+// map(u,v) → screen; u: left→right, v: top→bottom. o: {floors,bays,col,seed,style,end,top(u)->v,detail,winDark,winSky,vines,haze,rim}
 function paintFacade(P, map, o) {
   const c = P.c, r = makeRng(o.seed);
   const top = o.top || (() => 0);
   const outline = [];
   for (let i = 0; i <= 24; i++) outline.push(map(i / 24, top(i / 24)));
   outline.push(map(1, 1), map(0, 1));
-  const a = map(0.5, 0), b = map(0.5, 1);
-  const vang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-  const pxH = Math.hypot(b[0] - a[0], b[1] - a[1]), pxW = Math.hypot(map(1, 0.5)[0] - map(0, 0.5)[0], map(1, 0.5)[1] - map(0, 0.5)[1]);
-  const big = pxH * pxW;
-  const w = P.shape(outline, o.col, { angle: vang, sw: [2, Math.max(3, Math.min(10, pxW / 30))], len: [pxH * 0.05, pxH * 0.25], density: 0.0025, talpha: [0.05, 0.13], cj: 0.12, max: 1600, amp: o.amp ?? 0.9, edgeW: 2, edgeA: 0.3 });
+  const a0 = map(0.5, 0), a1 = map(0.5, 1);
+  const vang = Math.atan2(a1[1] - a0[1], a1[0] - a0[0]);
+  const pxH = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]), pxW = Math.hypot(map(1, 0.5)[0] - map(0, 0.5)[0], map(1, 0.5)[1] - map(0, 0.5)[1]);
+  const w = P.shape(outline, o.col, { angle: vang, sw: [2, Math.max(3, Math.min(12, pxW / 24))], len: [pxH * 0.05, pxH * 0.3], density: 0.003, talpha: [0.06, 0.16], cj: 0.14, max: 2000, amp: o.amp ?? 0.9, edgeW: 2, edgeA: 0.3 });
   c.save(); P.path(w); c.clip();
-  const F = o.floors, B = o.bays;
-  const floorPx = pxH / F, bayPx = pxW / B;
-  const slab = shadec(o.col, 1.08), under = shadec(o.col, 0.72);
-  const dark = o.winDark, sky = o.winSky;
   const quad = (u0, v0, u1, v1) => [map(u0, v0), map(u1, v0), map(u1, v1), map(u0, v1)];
   const fillQ = (q, col, al = 1) => { P.path(q); c.globalAlpha = al; c.fillStyle = css(col); c.fill(); c.globalAlpha = 1; };
   const lineUV = (u0, v0, u1, v1, col, wpx, al) => { const p0 = map(u0, v0), p1 = map(u1, v1); c.globalAlpha = al; c.strokeStyle = css(col); c.lineWidth = wpx; c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(p1[0], p1[1]); c.stroke(); c.globalAlpha = 1; };
-  for (let f = 0; f < F; f++) {
-    const v0 = f / F, v1 = (f + 1) / F;
-    if (o.style !== 'office' && floorPx > 2.2) { // balcony slab bands
-      fillQ(quad(0, v0, 1, v0 + 0.16 / F), slab, 0.55);
-      lineUV(0, v0 + 0.17 / F, 1, v0 + 0.17 / F, under, Math.max(0.6, floorPx * 0.06), 0.6);
+  // repainted panels and weather patches
+  for (let i = 0; i < 5; i++) { const u0 = r.f() * 0.8, v0 = r.f() * 0.8; fillQ(quad(u0, Math.max(v0, top(u0)), u0 + r.range(0.08, 0.3), v0 + r.range(0.1, 0.4)), jitterc(o.col, r, 0.12), r.range(0.1, 0.22)); }
+  const F = o.floors, B = o.bays, floorPx = pxH / F, bayPx = pxW / B;
+  const slab = shadec(o.col, 1.1), under = shadec(o.col, 0.66), rust = mixc(PAL.rustDark, o.col, 0.3);
+  const dark = o.winDark, sky = o.winSky;
+  if (o.end) { // end wall of an apartment block: stairwell windows and a big painted building number
+    for (let f = 1; f < F - 1; f++) { const v0 = f / F; if (v0 < top(0.5) + 0.02) continue; fillQ(quad(0.46, v0 + 0.3 / F, 0.54, v0 + 0.8 / F), mixc(dark, sky, hashi(o.seed, f) * 0.5), 0.9); }
+    if (pxH > 140 && top(0.5) < 0.05) {
+      const num = String(101 + (Math.abs(o.seed) % 17)), u0 = 0.5 - 0.09 * num.length, v0 = 0.05;
+      const p00 = map(u0, v0), p10 = map(u0 + 0.18 * num.length, v0), p01 = map(u0, v0 + 0.07);
+      c.save(); c.setTransform((p10[0] - p00[0]) / (64 * num.length), (p10[1] - p00[1]) / (64 * num.length), (p01[0] - p00[0]) / 100, (p01[1] - p00[1]) / 100, p00[0], p00[1]);
+      c.strokeStyle = css(mixc(o.col, hex('#f4efe4'), 0.45)); c.globalAlpha = 0.85;
+      [...num].forEach((ch, i) => drawStrokes(c, DIGITS[ch], i * 64, 0, 1, 1, 13, r, 1.2));
+      c.restore();
     }
-    for (let bi = 0; bi < B; bi++) {
-      const u0 = bi / B, u1 = (bi + 1) / B;
+  } else if (o.style === 'office') { // curtain wall
+    for (let f = 0; f < F; f++) for (let bi = 0; bi < B; bi++) {
+      const v0 = f / F, v1 = (f + 1) / F, u0 = bi / B, u1 = (bi + 1) / B;
       if (v0 < top(u0) + 0.01 || v0 < top(u1) + 0.01) continue;
-      const h = hashi(o.seed, f, bi);
-      const wu0 = u0 + (o.style === 'office' ? 0.1 : 0.14) / B, wu1 = u1 - (o.style === 'office' ? 0.1 : 0.14) / B;
-      const wv0 = v0 + (o.style === 'office' ? 0.14 : 0.3) / F, wv1 = v1 - 0.1 / F;
-      let col;
-      if (h < 0.42) col = mixc(dark, sky, hashi(o.seed + 5, f, bi) * 0.35);
-      else if (h < 0.7) col = mixc(dark, sky, 0.55 + hashi(o.seed + 9, f, bi) * 0.35);
-      else if (h < 0.84) col = shadec(dark, 0.62);
-      else if (h < 0.9) col = mixc(o.col, dark, 0.35);
-      else col = mixc(dark, sky, 0.25);
-      const q = quad(wu0, wv0, wu1, wv1);
-      if (floorPx < 3 || bayPx < 3) { fillQ(q, col, 0.75); continue; }
-      fillQ(q, col, 0.95);
-      if (floorPx > 7 && o.detail > 0.3) {
-        lineUV(wu0, wv0, wu1, wv0, under, Math.max(0.7, floorPx * 0.08), 0.75); // shadow under lintel
-        lineUV(wu0, wv1, wu1, wv1, slab, Math.max(0.7, floorPx * 0.06), 0.6); // sill
-        if (h < 0.7 && bayPx > 10) lineUV((wu0 + wu1) / 2, wv0, (wu0 + wu1) / 2, wv1, under, Math.max(0.6, bayPx * 0.03), 0.5); // mullion
-        if (h >= 0.7 && h < 0.84 && floorPx > 12) { // broken pane shards
-          const p0 = map(wu0, wv0), p2 = map(wu1, wv1);
-          c.globalAlpha = 0.7; c.fillStyle = css(mixc(dark, sky, 0.6));
-          c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(lerp(p0[0], p2[0], 0.35), p0[1]); c.lineTo(lerp(p0[0], p2[0], 0.12), lerp(p0[1], p2[1], 0.5)); c.closePath(); c.fill(); c.globalAlpha = 1;
+      const h = hashi(o.seed, f, bi), q = quad(u0 + 0.04 / B, v0 + 0.06 / F, u1 - 0.04 / B, v1 - 0.04 / F);
+      fillQ(q, h < 0.15 ? shadec(dark, 0.7) : mixc(dark, sky, 0.35 + 0.5 * fbm2(u0 * 3 + o.seed, v0 * 2, 2)), floorPx < 3 ? 0.6 : 0.92);
+    }
+    if (floorPx > 4) for (let k = 0; k < 7; k++) { const u = r.f(); fillQ([map(u, 0), map(u + 0.06, 0), map(u - 0.1, 1), map(u - 0.16, 1)], hex('#ffffff'), 0.07); } // sky reflections sweeping across
+  } else { // apartments and old shop buildings: balconies, windows, rails, AC units
+    for (let f = 0; f < F; f++) {
+      const v0 = f / F, v1 = (f + 1) / F, shop = o.style === 'old' && f === F - 1;
+      if (floorPx > 2.2) { lineUV(0, v0 + 0.02 / F, 1, v0 + 0.02 / F, slab, Math.max(0.6, floorPx * 0.05), 0.55); lineUV(0, v0 + 0.1 / F, 1, v0 + 0.1 / F, under, Math.max(0.6, floorPx * 0.07), 0.45); }
+      for (let bi = 0; bi < B; bi++) {
+        const u0 = bi / B, u1 = (bi + 1) / B;
+        if (v0 < top(u0) + 0.01 || v0 < top(u1) + 0.01) continue;
+        const h = hashi(o.seed, f, bi), h2 = hashi(o.seed + 3, f, bi);
+        const wu0 = u0 + 0.12 / B, wu1 = u1 - 0.12 / B, wv0 = v0 + 0.24 / F, wv1 = v1 - 0.08 / F, ww = wu1 - wu0, wh = wv1 - wv0;
+        const q = quad(wu0, wv0, wu1, wv1);
+        if (floorPx < 3 || bayPx < 3) { fillQ(q, mixc(dark, sky, h * 0.6), 0.7); continue; }
+        if (shop) { // roller-shutter shopfront
+          fillQ(q, mixc(hex('#8d8a92'), o.col, 0.3), 0.95);
+          for (let k = 1; k < 8; k++) lineUV(wu0, wv0 + wh * k / 8, wu1, wv0 + wh * k / 8, under, Math.max(0.5, floorPx * 0.02), 0.5);
+          continue;
         }
-        if (h > 0.95 && floorPx > 9) { // plant spilling from a window
-          const p = map((wu0 + wu1) / 2, wv1);
-          for (let k = 0; k < 5; k++) P.fill(P.blob(p[0] + r.range(-bayPx, bayPx) * 0.3, p[1] + r.range(-2, floorPx * 0.4), bayPx * r.range(0.1, 0.22), floorPx * r.range(0.1, 0.2), r.f() * 99, 0.3, 9), jitterc(k % 2 ? PAL.leafMid : PAL.leafDark, r, 0.1), 0.95, 0.3);
+        let col;
+        if (h < 0.34) col = mixc(dark, sky, 0.55 + 0.35 * h2);       // glass reflecting the sky
+        else if (h < 0.62) col = mixc(dark, sky, 0.12 * h2);          // open, dark interior
+        else if (h < 0.72) col = shadec(dark, 0.7);                   // broken, deep shadow
+        else if (h < 0.8) col = mixc(hex('#cbbfa8'), o.col, 0.3);     // faded curtain
+        else if (h < 0.87) col = mixc(o.col, under, 0.4);             // boarded up
+        else col = mixc(dark, sky, 0.25);
+        fillQ(q, col, 0.96);
+        if (floorPx > 8 && o.detail > 0.3) {
+          lineUV(wu0, wv0, wu1, wv0, under, Math.max(0.7, floorPx * 0.07), 0.7);
+          if (h < 0.34) { fillQ([map(wu0 + ww * 0.25, wv0), map(wu0 + ww * 0.42, wv0), map(wu0 + ww * 0.18, wv1), map(wu0 + ww * 0.01, wv1)], hex('#ffffff'), 0.16); lineUV(wu0 + ww * 0.5, wv0, wu0 + ww * 0.5, wv1, under, Math.max(0.6, bayPx * 0.025), 0.55); }
+          else if (h < 0.62) fillQ(quad(wu0 + ww * 0.55, wv0 + wh * 0.15, wu1 - ww * 0.08, wv1 - wh * 0.1), mixc(dark, o.col, 0.25), 0.5); // glimpse of the back wall
+          else if (h < 0.72) { fillQ([map(wu0, wv0), map(wu0 + ww * 0.3, wv0), map(wu0 + ww * 0.08, wv0 + wh * 0.45)], mixc(dark, sky, 0.6), 0.75); fillQ([map(wu1, wv1), map(wu1 - ww * 0.25, wv1), map(wu1, wv1 - wh * 0.4)], mixc(dark, sky, 0.5), 0.7); }
+          else if (h < 0.8) for (let k = 1; k < 4; k++) lineUV(wu0 + ww * k / 4, wv0, wu0 + ww * k / 4 + ww * 0.03, wv1 - wh * 0.3, shadec(col, 0.85), Math.max(0.5, bayPx * 0.012), 0.6);
+          if (o.style === 'apt') { // balcony rail
+            const ry = wv1 - wh * 0.3;
+            lineUV(wu0, ry, wu1, ry, rust, Math.max(0.6, floorPx * 0.035), 0.7);
+            lineUV(wu0, wv1 - wh * 0.04, wu1, wv1 - wh * 0.04, rust, Math.max(0.6, floorPx * 0.03), 0.55);
+            if (floorPx > 20) for (let k = 1; k < 9; k++) lineUV(wu0 + ww * k / 9, ry, wu0 + ww * k / 9, wv1, rust, Math.max(0.5, bayPx * 0.008), 0.4);
+            if (h2 > 0.9) { const p = map(wu1 - ww * 0.15, ry); for (let k = 0; k < 6; k++) P.fill(P.blob(p[0] - r.range(0, bayPx * 0.6), p[1] + r.range(-2, floorPx * 0.3), bayPx * r.range(0.06, 0.14), floorPx * r.range(0.08, 0.16), r.f() * 99, 0.3, 9), jitterc(k % 2 ? PAL.leafMid : PAL.leafDark, r, 0.1), 0.95, 0.3); }
+          }
+          if (h2 < 0.08) { fillQ(quad(wu1 - ww * 0.32, v1 - 0.3 / F, wu1 - ww * 0.04, v1 - 0.06 / F), hex('#c9c6c2'), 0.9); fillQ(quad(wu1 - ww * 0.27, v1 - 0.26 / F, wu1 - ww * 0.15, v1 - 0.1 / F), hex('#4b4852'), 0.7); } // AC unit
+          if (h > 0.62 && h < 0.72) lineUV(wu0 + ww * 0.5, wv0 - 0.02, wu0 + ww * 0.45, Math.max(0, wv0 - 0.06), hex('#2c2830'), Math.max(1, bayPx * 0.2), 0.18); // soot above a burnt-out window
         }
       }
     }
+    for (let bi = 1; bi < B; bi++) if (hashi(o.seed, 99, bi) < 0.12 && bayPx > 6) { // drainpipes
+      const u = bi / B;
+      lineUV(u, top(u), u, 1, shadec(o.col, 0.72), Math.max(0.8, bayPx * 0.04), 0.7);
+      for (let f = 1; f < F; f += 3) lineUV(u - 0.01, f / F, u + 0.01, f / F, shadec(o.col, 0.6), Math.max(0.6, bayPx * 0.03), 0.6);
+    }
   }
-  // grime streaks running down
-  const streaks = Math.round((o.stains ?? 1) * B * 2.2);
+  // grime streaks running down from sills and slabs
+  const streaks = Math.round((o.stains ?? 1) * B * 3);
   for (let i = 0; i < streaks; i++) {
-    const u = r.f(), v = Math.max(top(u), r.f() * 0.6), len = r.range(0.08, 0.5);
+    const u = r.f(), v = Math.max(top(u), Math.floor(r.f() * F * 0.8) / F + 1 / F), len = r.range(0.04, 0.4);
     const p0 = map(u, v), p1 = map(u + r.range(-0.004, 0.004), Math.min(1, v + len));
-    c.globalAlpha = r.range(0.06, 0.16); c.strokeStyle = css(shadec(o.col, 0.6)); c.lineWidth = Math.max(1, bayPx * r.range(0.05, 0.25));
+    c.globalAlpha = r.range(0.06, 0.18); c.strokeStyle = css(r.chance(0.3) ? rust : shadec(o.col, 0.58)); c.lineWidth = Math.max(1, bayPx * r.range(0.05, 0.3));
     c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(p1[0], p1[1]); c.stroke();
   }
   c.globalAlpha = 1;
-  // lit edge (sun catching the sunward corner)
-  if (o.rim) {
-    const side = o.rim.side ?? 1, k = o.rim.w ?? 0.03;
-    const q = side > 0 ? quad(1 - k, 0, 1, 1) : quad(0, 0, k, 1);
-    fillQ(q, o.rim.col, o.rim.a ?? 0.5);
+  if (o.top) for (let i = 0; i < 18; i++) { // ruined top: scorched floors under the break, rebar poking out
+    const u = r.f(), v = top(u);
+    if (bayPx > 4) lineUV(u, v + 0.004, u + r.range(-0.01, 0.01), v + r.range(0.02, 0.07), hex('#2b2630'), Math.max(1, bayPx * 0.25), 0.25);
+    if (floorPx > 5) lineUV(u, v, u + r.range(-0.02, 0.02), v - r.range(0.01, 0.03), PAL.rustDark, Math.max(0.6, bayPx * 0.03), 0.8);
   }
-  if (o.lightK != null && o.lightK < 1) { // shade wash
-    P.path(w); c.globalAlpha = 1 - o.lightK; c.fillStyle = css(o.shadeCol ?? PAL.shadowCool); c.globalCompositeOperation = 'multiply'; c.fill(); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
-  }
-  // vines draping from the top
-  const vines = Math.round((o.vines ?? 0) * B * 0.5);
+  if (o.rim) { const side = o.rim.side ?? 1, k = o.rim.w ?? 0.03; fillQ(side > 0 ? quad(1 - k, 0, 1, 1) : quad(0, 0, k, 1), o.rim.col, o.rim.a ?? 0.5); }
+  if (o.lightK != null && o.lightK < 1) { P.path(w); c.globalAlpha = 1 - o.lightK; c.fillStyle = css(o.shadeCol ?? PAL.shadowCool); c.globalCompositeOperation = 'multiply'; c.fill(); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1; }
+  // ivy: curtains hanging from a few points on the roofline, patches climbing from the ground
+  const vines = Math.round((o.vines ?? 0) * B * 0.7);
+  const centres = [r.f(), r.f(), r.f()];
   for (let i = 0; i < vines; i++) {
-    const u = r.f(), v = top(u) + 0.002;
-    const p0 = map(u, v), p1 = map(u + r.range(-0.03, 0.03), Math.min(1, v + r.range(0.15, 0.75)));
-    paintVine(P, p0, p1, Math.max(0.6, bayPx * 0.05), r.f() * 1e5, o.leafScale ?? Math.max(0.6, bayPx * 0.07));
+    const u = clamp(r.pick(centres) + r.gauss() * 0.06), v = top(u) + 0.002;
+    const p0 = map(u, v), p1 = map(u + r.range(-0.02, 0.02), Math.min(1, v + r.range(0.1, 0.6) * (r.chance(0.3) ? 1.4 : 1)));
+    paintVine(P, p0, p1, Math.max(0.6, bayPx * 0.03), r.f() * 1e5, o.leafScale ?? Math.max(0.6, bayPx * 0.032));
+  }
+  if ((o.vines ?? 0) > 0.4 && bayPx > 5) for (let k = 0; k < 2; k++) {
+    const uc = r.f(), hgt = r.range(0.08, 0.3);
+    for (let i = 0; i < 160; i++) {
+      const u = uc + r.gauss() * 0.05, v = 1 - Math.abs(r.gauss()) * hgt, p = map(u, v), s = Math.max(1, bayPx * r.range(0.025, 0.06));
+      c.fillStyle = css(jitterc(r.pick([PAL.leafDark, PAL.leafMid, PAL.leafMid, PAL.leafLit]), r, 0.12)); c.beginPath(); c.ellipse(p[0], p[1], s, s * 0.65, r.f() * 3, 0, Math.PI * 2); c.fill();
+    }
   }
   if (o.haze) { P.path(w); c.globalAlpha = o.haze[1]; c.fillStyle = css(o.haze[0]); c.fill(); c.globalAlpha = 1; }
   c.restore();

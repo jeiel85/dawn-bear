@@ -126,10 +126,11 @@
   <div id="overlay"><div id="msg">그림을 그리는 중…</div><div id="bar"><i></i></div><div id="help">Space 재생/일시정지 · ← → 5초 이동 · M 소리 · R 처음부터 · F 전체화면</div></div>
   <div id="toast"></div>
 </div>
-<script>
+<script id="film">
 'use strict';
 // ───────────────────────────── core: constants, seeded randomness, noise, math, color ─────────────────────────────
 const W = 1920, H = 1080, FPS = 24, DURATION = 91, TOTAL_FRAMES = DURATION * FPS;
+const IN_WORKER = typeof document === 'undefined'; // the same script also runs as a background painter (see SCENE.load)
 
 function mulberry32(a) {
   return function () {
@@ -178,6 +179,16 @@ function noise2(x, y) {
   const c = NOISE_VAL[P[P[X] + Y + 1]], d = NOISE_VAL[P[P[X + 1] + Y + 1]];
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
+function noise3(x, y, z) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf), P = NOISE_PERM, V = NOISE_VAL;
+  const X = xi & 255, Y = yi & 255, Z = zi & 255;
+  const g = (a, b, c) => V[P[(P[(P[a] + b) & 511] + c) & 511]];
+  const l = (a, b, t) => a + (b - a) * t;
+  return l(l(l(g(X, Y, Z), g(X + 1, Y, Z), u), l(g(X, Y + 1, Z), g(X + 1, Y + 1, Z), u), v),
+    l(l(g(X, Y, Z + 1), g(X + 1, Y, Z + 1), u), l(g(X, Y + 1, Z + 1), g(X + 1, Y + 1, Z + 1), u), v), w);
+}
+function fbm3(x, y, z, oct = 4) { let s = 0, a = 0.5, n = 0; for (let i = 0; i < oct; i++) { s += a * noise3(x, y, z); n += a; x = x * 2.03 + 5.1; y = y * 2.03 + 1.7; z = z * 2.03 + 3.3; a *= 0.5; } return s / n; }
 function fbm2(x, y, oct = 4) {
   let s = 0, a = 0.5, n = 0;
   for (let i = 0; i < oct; i++) { s += a * noise2(x, y); n += a; x = x * 2.03 + 17.1; y = y * 2.03 + 9.7; a *= 0.5; }
@@ -299,7 +310,11 @@ function keys(ks, t) {
   return ks[ks.length - 1][1];
 }
 // ───────────────────────────── brush: gouache painting engine (paper, bristle strokes, wobbly shapes) ─────────────────────────────
-function newCanvas(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+function newCanvas(w, h) {
+  w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
+  if (IN_WORKER) { const oc = new OffscreenCanvas(w, h); oc.getContext('2d', { willReadFrequently: true }); return oc; } // CPU raster: each worker paints on its own core
+  const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+}
 
 // periodic value noise for tileable textures
 function noise2p(x, y, p) {
@@ -534,6 +549,18 @@ const HANGUL = {
   '물': [[[16, 6], [16, 30], [72, 30], [72, 6], [16, 6]], [[8, 44], [92, 44]], [[50, 44], [50, 56]], [[18, 64], [80, 64], [80, 76], [18, 76], [18, 94], [82, 94]]],
 };
 
+// digits for painted building numbers; box 0..60 x 0..100
+const DIGITS = {
+  0: [arcPts(30, 50, 25, 46, 0, 360, 24)], 1: [[[16, 18], [34, 4], [34, 96]]],
+  2: [[[8, 24], [16, 8], [32, 3], [48, 10], [52, 26], [44, 44], [8, 96], [54, 96]]],
+  3: [[[8, 10], [48, 10], [28, 44], [44, 48], [54, 64], [48, 86], [30, 97], [8, 90]]],
+  4: [[[42, 96], [42, 4], [6, 68], [56, 68]]],
+  5: [[[50, 6], [14, 6], [10, 44], [30, 38], [48, 46], [54, 66], [46, 88], [28, 97], [8, 90]]],
+  6: [[[46, 8], [28, 6], [12, 22], [6, 56], [10, 82], [28, 97], [46, 88], [52, 68], [44, 50], [28, 46], [10, 56]]],
+  7: [[[6, 6], [54, 6], [24, 96]]],
+  8: [arcPts(30, 28, 20, 22, 0, 360, 18), arcPts(30, 72, 24, 25, 0, 360, 20)],
+  9: [[[50, 44], [34, 52], [14, 46], [8, 26], [18, 8], [36, 4], [50, 16], [54, 40], [48, 74], [30, 96], [12, 92]]],
+};
 // draw a stroke list into ctx with a wobbly pen; box→ (x, y, size); returns nothing
 function drawStrokes(ctx, strokes, x, y, sx, sy, width, rng, wobble = 0.6) {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = width;
@@ -688,23 +715,79 @@ function cloudlet(P, x, y, w, h, cols, seed, o = {}) {
   if (hi) for (const p of puffs) if (r.chance(0.6)) disc(p[0] + lx * p[2] * 0.55, p[1] + ly * p[2] * 0.55, p[2] * 0.36, hi);
   c.restore(); c.globalAlpha = 1;
 }
-// dawn altocumulus field in perspective: big cloudlets high, tiny near the horizon
+// a painted cel cloud: lobes merged into one silhouette, a lit band that follows the silhouette,
+// a highlight rim, a shaded core, faint inner lobe edges, brush texture and a slightly dissolving base
+function paintCloudMass(ctx, x, y, w, h, cols, seed, o = {}) {
+  const r = makeRng(seed), lx = o.lx ?? 0.3, ly = o.ly ?? 0.95, ln = Math.hypot(lx, ly) || 1, Lx = lx / ln, Ly = ly / ln;
+  const pad = Math.ceil(h * 0.5 + 6), cw = Math.ceil(w * 1.15 + pad * 2), ch = Math.ceil(h * 1.5 + pad * 2);
+  const ox = cw / 2, oy = ch - pad;
+  const M = newCanvas(cw, ch), m = M.getContext('2d');
+  const lobes = [], n = Math.max(4, Math.round(w / h * 2.6));
+  for (let i = 0; i < n; i++) {
+    const u = (i + 0.15 + r.f() * 0.7) / n, prof = Math.pow(Math.sin(Math.PI * u), 0.75);
+    const rad = h * (0.2 + 0.36 * prof) * r.range(0.8, 1.2);
+    lobes.push([ox + (u - 0.5) * w, oy - rad * 0.75 * prof - h * 0.22 * prof * r.f(), rad]);
+  }
+  for (let k = 0; k < n * 0.9; k++) { const b = r.pick(lobes), a = r.range(-Math.PI * 0.92, -Math.PI * 0.08); lobes.push([b[0] + Math.cos(a) * b[2] * 0.72, b[1] + Math.sin(a) * b[2] * 0.68, b[2] * r.range(0.32, 0.58)]); }
+  m.fillStyle = '#fff';
+  for (const l of lobes) { m.beginPath(); m.arc(l[0], l[1], l[2], 0, Math.PI * 2); m.fill(); }
+  // flat, slightly wavy base
+  m.globalCompositeOperation = 'destination-out'; m.beginPath(); m.moveTo(0, ch);
+  for (let i = 0; i <= 24; i++) { const xx = i / 24 * cw; m.lineTo(xx, oy + h * 0.04 + (noise2(i * 0.7 + seed, 1.3) - 0.5) * h * 0.06); }
+  m.lineTo(cw, ch); m.closePath(); m.fill(); m.globalCompositeOperation = 'source-over';
+  const band = (d, sign, col, alpha) => { // part of the silhouette within d of the edge facing (sign · light)
+    const T = newCanvas(cw, ch), t = T.getContext('2d');
+    t.drawImage(M, 0, 0); t.globalCompositeOperation = 'destination-out'; t.drawImage(M, -sign * d * Lx, -sign * d * Ly);
+    t.globalCompositeOperation = 'source-in'; t.fillStyle = css(col); t.fillRect(0, 0, cw, ch);
+    C.globalAlpha = alpha; C.drawImage(T, 0, 0); C.globalAlpha = 1;
+  };
+  const Cv = newCanvas(cw, ch), C = Cv.getContext('2d');
+  const g = C.createLinearGradient(0, oy - h * 1.2, 0, oy); g.addColorStop(0, css(cols.mid)); g.addColorStop(1, css(cols.shade ?? cols.mid));
+  C.fillStyle = g; C.fillRect(0, 0, cw, ch);
+  C.globalCompositeOperation = 'destination-in'; C.drawImage(M, 0, 0); C.globalCompositeOperation = 'source-atop';
+  // inner lobe edges: a faint lit crescent on some lobes shows the heap's structure
+  for (const l of lobes) if (r.chance(0.5)) { // soft shading toward each lobe's lit side
+    const gg = C.createRadialGradient(l[0] + Lx * l[2] * 0.4, l[1] + Ly * l[2] * 0.4, 0, l[0] + Lx * l[2] * 0.4, l[1] + Ly * l[2] * 0.4, l[2] * 1.1);
+    gg.addColorStop(0, css(cols.lit, 0.32)); gg.addColorStop(1, css(cols.lit, 0));
+    C.fillStyle = gg; C.fillRect(l[0] - l[2] * 2, l[1] - l[2] * 2, l[2] * 4, l[2] * 4);
+  }
+  C.globalAlpha = 1; C.globalCompositeOperation = 'source-over';
+  band(h * (o.litBand ?? 0.38), 1, cols.lit, 1);
+  if (cols.hi) band(h * 0.07, 1, cols.hi, 0.9);
+  band(h * 0.22, -1, shadec(cols.shade ?? cols.mid, 0.9), 0.45);
+  // brush texture inside the silhouette
+  C.globalCompositeOperation = 'source-atop';
+  const P = new Painter(C, seed + 7);
+  for (let i = 0; i < Math.min(90, w * h / 900); i++) {
+    const px = ox + r.range(-0.5, 0.5) * w, py = oy - r.f() * h * 1.1;
+    P.stroke(px, py, r.range(-0.25, 0.25), r.range(0.1, 0.35) * w, r.range(0.03, 0.08) * h, r.chance(0.5) ? cols.mid : cols.lit, r.range(0.06, 0.16), { bristles: 3, cj: 0.06 });
+  }
+  // dissolve the base a little
+  C.globalCompositeOperation = 'destination-out';
+  const fg = C.createLinearGradient(0, oy - h * 0.25, 0, oy + h * 0.05); fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,0.45)');
+  C.fillStyle = fg; C.fillRect(0, oy - h * 0.25, cw, h * 0.4);
+  C.globalCompositeOperation = 'source-over';
+  ctx.save(); ctx.globalAlpha = (o.alpha ?? 1) * 0.5; ctx.filter = `blur(${Math.max(1, h * 0.03).toFixed(1)}px)`;
+  ctx.drawImage(Cv, x - ox, y - oy); ctx.filter = 'none'; ctx.globalAlpha = o.alpha ?? 1;
+  ctx.drawImage(Cv, x - ox, y - oy); ctx.restore();
+}
+// a field of clouds in perspective: big ones high, small and hazier toward the horizon, clustered by noise
 function paintAltoField(P, w, yTop, yHor, cols, seed, o = {}) {
-  const r = makeRng(seed), rows = o.rows ?? 18;
-  for (let i = rows - 1; i >= 0; i--) {
-    const k = i / (rows - 1), y = yTop + (yHor - yTop) * Math.pow(k, 1.6);
-    const s = lerp(o.big ?? 46, o.small ?? 5, Math.pow(k, 0.8));
-    let x = -s * 4 * r.f();
-    while (x < w + s * 4) {
-      const cw = s * r.range(2.5, 6.5);
-      const cover = fbm2(x * 0.0018 + seed, y * 0.008 + seed * 0.3, 3);
-      if (cover > (o.thresh ?? 0.5)) {
-        const fade = lerp(1, 0.55, k);
-        const cc = o.hazeTo ? { shade: mixc(cols.shade, o.hazeTo, k * 0.6), mid: mixc(cols.mid, o.hazeTo, k * 0.55), lit: mixc(cols.lit, o.hazeTo, k * 0.35), hi: cols.hi } : cols;
-        cloudlet(P, x + cw / 2, y + r.range(-s, s) * 1.1, cw, s, cc, seed * 31 + i * 97 + Math.round(x), { lx: o.lx ?? 0.2, ly: o.ly ?? 1, alpha: fade });
-        x += cw * r.range(1.05, 1.6);
-      } else x += s * r.range(2, 4);
-    }
+  const r = makeRng(seed), count = Math.round((o.rows ?? 14) * 2.6), placed = [];
+  for (let i = 0; i < count * 6 && placed.length < count; i++) {
+    const k = Math.pow(r.f(), 0.85), y = yTop + (yHor - yTop) * Math.pow(k, 1.35);
+    const band = r.chance(0.4); // long stratocumulus band vs. a heap
+    const s = lerp(o.big ?? 46, o.small ?? 6, Math.pow(k, 0.8)) * r.range(0.65, 1.3) * (band ? 0.6 : 1);
+    const cw = s * (band ? r.range(4.5, 9) : r.range(1.7, 3.6)), x = r.range(-cw * 0.4, w + cw * 0.4);
+    if (fbm2(x * 0.0016 + seed, y * 0.005 + seed * 0.3, 3) < (o.thresh ?? 0.5) - 0.06) continue;
+    if (placed.some((q) => Math.abs(q.x - x) < (q.w + cw) * 0.36 && Math.abs(q.y - y) < (q.h + s) * 0.45)) continue;
+    placed.push({ x, y, w: cw, h: s, k });
+  }
+  placed.sort((a, b) => b.k - a.k);
+  for (const q of placed) {
+    const hz = o.hazeTo ? q.k * 0.6 : 0;
+    const cc = hz ? { shade: mixc(cols.shade, o.hazeTo, hz), mid: mixc(cols.mid, o.hazeTo, hz), lit: mixc(cols.lit, o.hazeTo, hz * 0.6), hi: cols.hi } : cols;
+    paintCloudMass(P.c, q.x, q.y, q.w, q.h, cc, seed * 31 + Math.round(q.x * 7 + q.y), { lx: o.lx ?? 0.2, ly: o.ly ?? 1, alpha: lerp(1, 0.7, q.k), litBand: o.litBand });
   }
 }
 // a cumulus heap: many puffs, flat-ish base, lit from (lx, ly)
@@ -769,87 +852,122 @@ function paintSkyline(P, x0, x1, baseY, o) {
 }
 
 // ── facades in perspective ──
-// map(u,v) → screen; u: left→right, v: top→bottom. o: {floors,bays,col,seed,style,top(u)->v,lightK,winDark,winSky,detail,vines,haze}
+// map(u,v) → screen; u: left→right, v: top→bottom. o: {floors,bays,col,seed,style,end,top(u)->v,detail,winDark,winSky,vines,haze,rim}
 function paintFacade(P, map, o) {
   const c = P.c, r = makeRng(o.seed);
   const top = o.top || (() => 0);
   const outline = [];
   for (let i = 0; i <= 24; i++) outline.push(map(i / 24, top(i / 24)));
   outline.push(map(1, 1), map(0, 1));
-  const a = map(0.5, 0), b = map(0.5, 1);
-  const vang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-  const pxH = Math.hypot(b[0] - a[0], b[1] - a[1]), pxW = Math.hypot(map(1, 0.5)[0] - map(0, 0.5)[0], map(1, 0.5)[1] - map(0, 0.5)[1]);
-  const big = pxH * pxW;
-  const w = P.shape(outline, o.col, { angle: vang, sw: [2, Math.max(3, Math.min(10, pxW / 30))], len: [pxH * 0.05, pxH * 0.25], density: 0.0025, talpha: [0.05, 0.13], cj: 0.12, max: 1600, amp: o.amp ?? 0.9, edgeW: 2, edgeA: 0.3 });
+  const a0 = map(0.5, 0), a1 = map(0.5, 1);
+  const vang = Math.atan2(a1[1] - a0[1], a1[0] - a0[0]);
+  const pxH = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]), pxW = Math.hypot(map(1, 0.5)[0] - map(0, 0.5)[0], map(1, 0.5)[1] - map(0, 0.5)[1]);
+  const w = P.shape(outline, o.col, { angle: vang, sw: [2, Math.max(3, Math.min(12, pxW / 24))], len: [pxH * 0.05, pxH * 0.3], density: 0.003, talpha: [0.06, 0.16], cj: 0.14, max: 2000, amp: o.amp ?? 0.9, edgeW: 2, edgeA: 0.3 });
   c.save(); P.path(w); c.clip();
-  const F = o.floors, B = o.bays;
-  const floorPx = pxH / F, bayPx = pxW / B;
-  const slab = shadec(o.col, 1.08), under = shadec(o.col, 0.72);
-  const dark = o.winDark, sky = o.winSky;
   const quad = (u0, v0, u1, v1) => [map(u0, v0), map(u1, v0), map(u1, v1), map(u0, v1)];
   const fillQ = (q, col, al = 1) => { P.path(q); c.globalAlpha = al; c.fillStyle = css(col); c.fill(); c.globalAlpha = 1; };
   const lineUV = (u0, v0, u1, v1, col, wpx, al) => { const p0 = map(u0, v0), p1 = map(u1, v1); c.globalAlpha = al; c.strokeStyle = css(col); c.lineWidth = wpx; c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(p1[0], p1[1]); c.stroke(); c.globalAlpha = 1; };
-  for (let f = 0; f < F; f++) {
-    const v0 = f / F, v1 = (f + 1) / F;
-    if (o.style !== 'office' && floorPx > 2.2) { // balcony slab bands
-      fillQ(quad(0, v0, 1, v0 + 0.16 / F), slab, 0.55);
-      lineUV(0, v0 + 0.17 / F, 1, v0 + 0.17 / F, under, Math.max(0.6, floorPx * 0.06), 0.6);
+  // repainted panels and weather patches
+  for (let i = 0; i < 5; i++) { const u0 = r.f() * 0.8, v0 = r.f() * 0.8; fillQ(quad(u0, Math.max(v0, top(u0)), u0 + r.range(0.08, 0.3), v0 + r.range(0.1, 0.4)), jitterc(o.col, r, 0.12), r.range(0.1, 0.22)); }
+  const F = o.floors, B = o.bays, floorPx = pxH / F, bayPx = pxW / B;
+  const slab = shadec(o.col, 1.1), under = shadec(o.col, 0.66), rust = mixc(PAL.rustDark, o.col, 0.3);
+  const dark = o.winDark, sky = o.winSky;
+  if (o.end) { // end wall of an apartment block: stairwell windows and a big painted building number
+    for (let f = 1; f < F - 1; f++) { const v0 = f / F; if (v0 < top(0.5) + 0.02) continue; fillQ(quad(0.46, v0 + 0.3 / F, 0.54, v0 + 0.8 / F), mixc(dark, sky, hashi(o.seed, f) * 0.5), 0.9); }
+    if (pxH > 140 && top(0.5) < 0.05) {
+      const num = String(101 + (Math.abs(o.seed) % 17)), u0 = 0.5 - 0.09 * num.length, v0 = 0.05;
+      const p00 = map(u0, v0), p10 = map(u0 + 0.18 * num.length, v0), p01 = map(u0, v0 + 0.07);
+      c.save(); c.setTransform((p10[0] - p00[0]) / (64 * num.length), (p10[1] - p00[1]) / (64 * num.length), (p01[0] - p00[0]) / 100, (p01[1] - p00[1]) / 100, p00[0], p00[1]);
+      c.strokeStyle = css(mixc(o.col, hex('#f4efe4'), 0.45)); c.globalAlpha = 0.85;
+      [...num].forEach((ch, i) => drawStrokes(c, DIGITS[ch], i * 64, 0, 1, 1, 13, r, 1.2));
+      c.restore();
     }
-    for (let bi = 0; bi < B; bi++) {
-      const u0 = bi / B, u1 = (bi + 1) / B;
+  } else if (o.style === 'office') { // curtain wall
+    for (let f = 0; f < F; f++) for (let bi = 0; bi < B; bi++) {
+      const v0 = f / F, v1 = (f + 1) / F, u0 = bi / B, u1 = (bi + 1) / B;
       if (v0 < top(u0) + 0.01 || v0 < top(u1) + 0.01) continue;
-      const h = hashi(o.seed, f, bi);
-      const wu0 = u0 + (o.style === 'office' ? 0.1 : 0.14) / B, wu1 = u1 - (o.style === 'office' ? 0.1 : 0.14) / B;
-      const wv0 = v0 + (o.style === 'office' ? 0.14 : 0.3) / F, wv1 = v1 - 0.1 / F;
-      let col;
-      if (h < 0.42) col = mixc(dark, sky, hashi(o.seed + 5, f, bi) * 0.35);
-      else if (h < 0.7) col = mixc(dark, sky, 0.55 + hashi(o.seed + 9, f, bi) * 0.35);
-      else if (h < 0.84) col = shadec(dark, 0.62);
-      else if (h < 0.9) col = mixc(o.col, dark, 0.35);
-      else col = mixc(dark, sky, 0.25);
-      const q = quad(wu0, wv0, wu1, wv1);
-      if (floorPx < 3 || bayPx < 3) { fillQ(q, col, 0.75); continue; }
-      fillQ(q, col, 0.95);
-      if (floorPx > 7 && o.detail > 0.3) {
-        lineUV(wu0, wv0, wu1, wv0, under, Math.max(0.7, floorPx * 0.08), 0.75); // shadow under lintel
-        lineUV(wu0, wv1, wu1, wv1, slab, Math.max(0.7, floorPx * 0.06), 0.6); // sill
-        if (h < 0.7 && bayPx > 10) lineUV((wu0 + wu1) / 2, wv0, (wu0 + wu1) / 2, wv1, under, Math.max(0.6, bayPx * 0.03), 0.5); // mullion
-        if (h >= 0.7 && h < 0.84 && floorPx > 12) { // broken pane shards
-          const p0 = map(wu0, wv0), p2 = map(wu1, wv1);
-          c.globalAlpha = 0.7; c.fillStyle = css(mixc(dark, sky, 0.6));
-          c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(lerp(p0[0], p2[0], 0.35), p0[1]); c.lineTo(lerp(p0[0], p2[0], 0.12), lerp(p0[1], p2[1], 0.5)); c.closePath(); c.fill(); c.globalAlpha = 1;
+      const h = hashi(o.seed, f, bi), q = quad(u0 + 0.04 / B, v0 + 0.06 / F, u1 - 0.04 / B, v1 - 0.04 / F);
+      fillQ(q, h < 0.15 ? shadec(dark, 0.7) : mixc(dark, sky, 0.35 + 0.5 * fbm2(u0 * 3 + o.seed, v0 * 2, 2)), floorPx < 3 ? 0.6 : 0.92);
+    }
+    if (floorPx > 4) for (let k = 0; k < 7; k++) { const u = r.f(); fillQ([map(u, 0), map(u + 0.06, 0), map(u - 0.1, 1), map(u - 0.16, 1)], hex('#ffffff'), 0.07); } // sky reflections sweeping across
+  } else { // apartments and old shop buildings: balconies, windows, rails, AC units
+    for (let f = 0; f < F; f++) {
+      const v0 = f / F, v1 = (f + 1) / F, shop = o.style === 'old' && f === F - 1;
+      if (floorPx > 2.2) { lineUV(0, v0 + 0.02 / F, 1, v0 + 0.02 / F, slab, Math.max(0.6, floorPx * 0.05), 0.55); lineUV(0, v0 + 0.1 / F, 1, v0 + 0.1 / F, under, Math.max(0.6, floorPx * 0.07), 0.45); }
+      for (let bi = 0; bi < B; bi++) {
+        const u0 = bi / B, u1 = (bi + 1) / B;
+        if (v0 < top(u0) + 0.01 || v0 < top(u1) + 0.01) continue;
+        const h = hashi(o.seed, f, bi), h2 = hashi(o.seed + 3, f, bi);
+        const wu0 = u0 + 0.12 / B, wu1 = u1 - 0.12 / B, wv0 = v0 + 0.24 / F, wv1 = v1 - 0.08 / F, ww = wu1 - wu0, wh = wv1 - wv0;
+        const q = quad(wu0, wv0, wu1, wv1);
+        if (floorPx < 3 || bayPx < 3) { fillQ(q, mixc(dark, sky, h * 0.6), 0.7); continue; }
+        if (shop) { // roller-shutter shopfront
+          fillQ(q, mixc(hex('#8d8a92'), o.col, 0.3), 0.95);
+          for (let k = 1; k < 8; k++) lineUV(wu0, wv0 + wh * k / 8, wu1, wv0 + wh * k / 8, under, Math.max(0.5, floorPx * 0.02), 0.5);
+          continue;
         }
-        if (h > 0.95 && floorPx > 9) { // plant spilling from a window
-          const p = map((wu0 + wu1) / 2, wv1);
-          for (let k = 0; k < 5; k++) P.fill(P.blob(p[0] + r.range(-bayPx, bayPx) * 0.3, p[1] + r.range(-2, floorPx * 0.4), bayPx * r.range(0.1, 0.22), floorPx * r.range(0.1, 0.2), r.f() * 99, 0.3, 9), jitterc(k % 2 ? PAL.leafMid : PAL.leafDark, r, 0.1), 0.95, 0.3);
+        let col;
+        if (h < 0.34) col = mixc(dark, sky, 0.55 + 0.35 * h2);       // glass reflecting the sky
+        else if (h < 0.62) col = mixc(dark, sky, 0.12 * h2);          // open, dark interior
+        else if (h < 0.72) col = shadec(dark, 0.7);                   // broken, deep shadow
+        else if (h < 0.8) col = mixc(hex('#cbbfa8'), o.col, 0.3);     // faded curtain
+        else if (h < 0.87) col = mixc(o.col, under, 0.4);             // boarded up
+        else col = mixc(dark, sky, 0.25);
+        fillQ(q, col, 0.96);
+        if (floorPx > 8 && o.detail > 0.3) {
+          lineUV(wu0, wv0, wu1, wv0, under, Math.max(0.7, floorPx * 0.07), 0.7);
+          if (h < 0.34) { fillQ([map(wu0 + ww * 0.25, wv0), map(wu0 + ww * 0.42, wv0), map(wu0 + ww * 0.18, wv1), map(wu0 + ww * 0.01, wv1)], hex('#ffffff'), 0.16); lineUV(wu0 + ww * 0.5, wv0, wu0 + ww * 0.5, wv1, under, Math.max(0.6, bayPx * 0.025), 0.55); }
+          else if (h < 0.62) fillQ(quad(wu0 + ww * 0.55, wv0 + wh * 0.15, wu1 - ww * 0.08, wv1 - wh * 0.1), mixc(dark, o.col, 0.25), 0.5); // glimpse of the back wall
+          else if (h < 0.72) { fillQ([map(wu0, wv0), map(wu0 + ww * 0.3, wv0), map(wu0 + ww * 0.08, wv0 + wh * 0.45)], mixc(dark, sky, 0.6), 0.75); fillQ([map(wu1, wv1), map(wu1 - ww * 0.25, wv1), map(wu1, wv1 - wh * 0.4)], mixc(dark, sky, 0.5), 0.7); }
+          else if (h < 0.8) for (let k = 1; k < 4; k++) lineUV(wu0 + ww * k / 4, wv0, wu0 + ww * k / 4 + ww * 0.03, wv1 - wh * 0.3, shadec(col, 0.85), Math.max(0.5, bayPx * 0.012), 0.6);
+          if (o.style === 'apt') { // balcony rail
+            const ry = wv1 - wh * 0.3;
+            lineUV(wu0, ry, wu1, ry, rust, Math.max(0.6, floorPx * 0.035), 0.7);
+            lineUV(wu0, wv1 - wh * 0.04, wu1, wv1 - wh * 0.04, rust, Math.max(0.6, floorPx * 0.03), 0.55);
+            if (floorPx > 20) for (let k = 1; k < 9; k++) lineUV(wu0 + ww * k / 9, ry, wu0 + ww * k / 9, wv1, rust, Math.max(0.5, bayPx * 0.008), 0.4);
+            if (h2 > 0.9) { const p = map(wu1 - ww * 0.15, ry); for (let k = 0; k < 6; k++) P.fill(P.blob(p[0] - r.range(0, bayPx * 0.6), p[1] + r.range(-2, floorPx * 0.3), bayPx * r.range(0.06, 0.14), floorPx * r.range(0.08, 0.16), r.f() * 99, 0.3, 9), jitterc(k % 2 ? PAL.leafMid : PAL.leafDark, r, 0.1), 0.95, 0.3); }
+          }
+          if (h2 < 0.08) { fillQ(quad(wu1 - ww * 0.32, v1 - 0.3 / F, wu1 - ww * 0.04, v1 - 0.06 / F), hex('#c9c6c2'), 0.9); fillQ(quad(wu1 - ww * 0.27, v1 - 0.26 / F, wu1 - ww * 0.15, v1 - 0.1 / F), hex('#4b4852'), 0.7); } // AC unit
+          if (h > 0.62 && h < 0.72) lineUV(wu0 + ww * 0.5, wv0 - 0.02, wu0 + ww * 0.45, Math.max(0, wv0 - 0.06), hex('#2c2830'), Math.max(1, bayPx * 0.2), 0.18); // soot above a burnt-out window
         }
       }
     }
+    for (let bi = 1; bi < B; bi++) if (hashi(o.seed, 99, bi) < 0.12 && bayPx > 6) { // drainpipes
+      const u = bi / B;
+      lineUV(u, top(u), u, 1, shadec(o.col, 0.72), Math.max(0.8, bayPx * 0.04), 0.7);
+      for (let f = 1; f < F; f += 3) lineUV(u - 0.01, f / F, u + 0.01, f / F, shadec(o.col, 0.6), Math.max(0.6, bayPx * 0.03), 0.6);
+    }
   }
-  // grime streaks running down
-  const streaks = Math.round((o.stains ?? 1) * B * 2.2);
+  // grime streaks running down from sills and slabs
+  const streaks = Math.round((o.stains ?? 1) * B * 3);
   for (let i = 0; i < streaks; i++) {
-    const u = r.f(), v = Math.max(top(u), r.f() * 0.6), len = r.range(0.08, 0.5);
+    const u = r.f(), v = Math.max(top(u), Math.floor(r.f() * F * 0.8) / F + 1 / F), len = r.range(0.04, 0.4);
     const p0 = map(u, v), p1 = map(u + r.range(-0.004, 0.004), Math.min(1, v + len));
-    c.globalAlpha = r.range(0.06, 0.16); c.strokeStyle = css(shadec(o.col, 0.6)); c.lineWidth = Math.max(1, bayPx * r.range(0.05, 0.25));
+    c.globalAlpha = r.range(0.06, 0.18); c.strokeStyle = css(r.chance(0.3) ? rust : shadec(o.col, 0.58)); c.lineWidth = Math.max(1, bayPx * r.range(0.05, 0.3));
     c.beginPath(); c.moveTo(p0[0], p0[1]); c.lineTo(p1[0], p1[1]); c.stroke();
   }
   c.globalAlpha = 1;
-  // lit edge (sun catching the sunward corner)
-  if (o.rim) {
-    const side = o.rim.side ?? 1, k = o.rim.w ?? 0.03;
-    const q = side > 0 ? quad(1 - k, 0, 1, 1) : quad(0, 0, k, 1);
-    fillQ(q, o.rim.col, o.rim.a ?? 0.5);
+  if (o.top) for (let i = 0; i < 18; i++) { // ruined top: scorched floors under the break, rebar poking out
+    const u = r.f(), v = top(u);
+    if (bayPx > 4) lineUV(u, v + 0.004, u + r.range(-0.01, 0.01), v + r.range(0.02, 0.07), hex('#2b2630'), Math.max(1, bayPx * 0.25), 0.25);
+    if (floorPx > 5) lineUV(u, v, u + r.range(-0.02, 0.02), v - r.range(0.01, 0.03), PAL.rustDark, Math.max(0.6, bayPx * 0.03), 0.8);
   }
-  if (o.lightK != null && o.lightK < 1) { // shade wash
-    P.path(w); c.globalAlpha = 1 - o.lightK; c.fillStyle = css(o.shadeCol ?? PAL.shadowCool); c.globalCompositeOperation = 'multiply'; c.fill(); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
-  }
-  // vines draping from the top
-  const vines = Math.round((o.vines ?? 0) * B * 0.5);
+  if (o.rim) { const side = o.rim.side ?? 1, k = o.rim.w ?? 0.03; fillQ(side > 0 ? quad(1 - k, 0, 1, 1) : quad(0, 0, k, 1), o.rim.col, o.rim.a ?? 0.5); }
+  if (o.lightK != null && o.lightK < 1) { P.path(w); c.globalAlpha = 1 - o.lightK; c.fillStyle = css(o.shadeCol ?? PAL.shadowCool); c.globalCompositeOperation = 'multiply'; c.fill(); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1; }
+  // ivy: curtains hanging from a few points on the roofline, patches climbing from the ground
+  const vines = Math.round((o.vines ?? 0) * B * 0.7);
+  const centres = [r.f(), r.f(), r.f()];
   for (let i = 0; i < vines; i++) {
-    const u = r.f(), v = top(u) + 0.002;
-    const p0 = map(u, v), p1 = map(u + r.range(-0.03, 0.03), Math.min(1, v + r.range(0.15, 0.75)));
-    paintVine(P, p0, p1, Math.max(0.6, bayPx * 0.05), r.f() * 1e5, o.leafScale ?? Math.max(0.6, bayPx * 0.07));
+    const u = clamp(r.pick(centres) + r.gauss() * 0.06), v = top(u) + 0.002;
+    const p0 = map(u, v), p1 = map(u + r.range(-0.02, 0.02), Math.min(1, v + r.range(0.1, 0.6) * (r.chance(0.3) ? 1.4 : 1)));
+    paintVine(P, p0, p1, Math.max(0.6, bayPx * 0.03), r.f() * 1e5, o.leafScale ?? Math.max(0.6, bayPx * 0.032));
+  }
+  if ((o.vines ?? 0) > 0.4 && bayPx > 5) for (let k = 0; k < 2; k++) {
+    const uc = r.f(), hgt = r.range(0.08, 0.3);
+    for (let i = 0; i < 160; i++) {
+      const u = uc + r.gauss() * 0.05, v = 1 - Math.abs(r.gauss()) * hgt, p = map(u, v), s = Math.max(1, bayPx * r.range(0.025, 0.06));
+      c.fillStyle = css(jitterc(r.pick([PAL.leafDark, PAL.leafMid, PAL.leafMid, PAL.leafLit]), r, 0.12)); c.beginPath(); c.ellipse(p[0], p[1], s, s * 0.65, r.f() * 3, 0, Math.PI * 2); c.fill();
+    }
   }
   if (o.haze) { P.path(w); c.globalAlpha = o.haze[1]; c.fillStyle = css(o.haze[0]); c.fill(); c.globalAlpha = 1; }
   c.restore();
@@ -2237,6 +2355,8 @@ function mkLayer(depth, ox = 0, oy = 0, w = W, h = H) {
   const canvas = newCanvas(w + 2 * ox, h + 2 * oy);
   return { canvas, ctx: canvas.getContext('2d'), ox, oy, depth };
 }
+// layer with uneven margins around the frame (left, top, right, bottom)
+function mkLayerR(depth, l, t, r, b) { const canvas = newCanvas(W + l + r, H + t + b); return { canvas, ctx: canvas.getContext('2d'), ox: l, oy: t, depth }; }
 function lp(L, cam, p) { const s = cam.project(p); return [s[0] + L.ox, s[1] + L.oy, s[2]]; }
 // clip a world polygon against the near plane, project into layer pixels
 function clipProj(L, cam, pts, near = 1) {
@@ -2368,6 +2488,7 @@ function paintBox(P, L, cam, b, env) {
     }
     paintFacade(P, map, {
       floors, bays, col, seed: b.seed + fc.n[0] * 7 + fc.n[2] * 13, style: b.style, top: jag, detail: env.detail,
+      end: b.style === 'apt' && fc.w < Math.max(b.x1 - b.x0, b.z1 - b.z0) * 0.8,
       winDark, winSky, vines: b.vines ?? 0.5, stains: 1.2, amp: 0.7,
       rim: sun > 0.05 && env.sunOn ? { side: v3.dot(fc.n, [SUN_AZ[2], 0, -SUN_AZ[0]]) > 0 ? -1 : 1, col: env.warm, a: 0.35 * (1 - hz), w: 0.025 } : null,
       haze: hz > 0.05 ? [env.haze, hz * 0.5] : null,
@@ -2436,13 +2557,16 @@ function paintGround(P, L, cam, env, o = {}) {
   }
   // texture strokes along the street direction
   const vp = lp(L, cam, [0, 0, -3000]);
+  const road = clipProj(L, cam, [[-24, 0, zFar], [24, 0, zFar], [24, 0, zNear], [-24, 0, zNear]]);
+  c.save(); if (road.length > 2) { P.path(road); c.clip(); }
   for (let i = 0; i < (o.strokes ?? 1400); i++) {
     const x = r.range(-18, 18), z = r.range(zFar, zNear), p = lp(L, cam, [x, 0, z]);
     if (p[2] < 2) continue;
     const s = 1 / cam.upp(p[2]);
-    const ang = Math.atan2(vp[1] - p[1], vp[0] - p[0]);
-    P.stroke(p[0], p[1], ang, r.range(4, 14) * s, r.range(0.3, 0.9) * s, hazeMix(env, jitterc(r.chance(0.5) ? PAL.asphaltLit : PAL.asphalt, r, 0.15), p[2]), r.range(0.15, 0.35), { bristles: 2 });
+    const ang = Math.atan2(vp[1] - p[1], vp[0] - p[0]), toVp = Math.hypot(vp[0] - p[0], vp[1] - p[1]);
+    P.stroke(p[0], p[1], ang, Math.min(r.range(4, 14) * s, toVp * 0.5), r.range(0.3, 0.9) * s, hazeMix(env, jitterc(r.chance(0.5) ? PAL.asphaltLit : PAL.asphalt, r, 0.15), p[2]), r.range(0.15, 0.35), { bristles: 2 });
   }
+  c.restore();
   // lane markings (faded dashes)
   for (let z = zFar; z < zNear; z += 9) {
     for (const lx of [-0.2, -9.2, 8.8]) {
@@ -2528,7 +2652,7 @@ function paintSkyFor(L, cam, stops, seed, o = {}) {
   }
   if (o.clouds !== false) {
     const P = new Painter(c, seed + 9);
-    paintAltoField(P, w, top + (o.cloudTop ?? 60), hor[1] - (o.cloudGap ?? 30), o.cloudCols ?? { mid: hex('#9c8db3'), lit: hex('#f2b9a4'), hi: hex('#ffdcb8'), shade: hex('#7b74a0') }, seed + 1, { rows: o.rows ?? 16, big: o.big ?? 50, small: o.small ?? 5, thresh: o.thresh ?? 0.52, lx: o.lx ?? (sp[0] > w / 2 ? 0.3 : -0.3), ly: o.ly ?? 0.9 });
+    paintAltoField(P, w, top + (o.cloudTop ?? 60), hor[1] - (o.cloudGap ?? 30), o.cloudCols ?? { mid: hex('#ad94b6'), lit: hex('#f6bda2'), hi: hex('#ffe0bc'), shade: hex('#7f75a3') }, seed + 1, { rows: o.rows ?? 16, big: o.big ?? 50, small: o.small ?? 5, thresh: o.thresh ?? 0.52, lx: o.lx ?? (sp[0] > w / 2 ? 0.35 : -0.35), ly: o.ly ?? (stops === PAL.dayGold ? -0.75 : 0.9), litBand: stops === PAL.dayGold ? 0.62 : 0.45, hazeTo: gradStops(stops, 0.9) });
   }
   return { hor, sun: sp };
 }
@@ -2635,7 +2759,7 @@ function drawSign(c, cam, B, t) { const q = signQuad(B, t).map((p) => cam.projec
 // sparrow on the robot's left shoulder (world-space perch); returns screen pos
 function perchPoint(B) { return boneP(B, 'shoulderL', [0.6, 2.75, 0.4]); }
 
-const CLOUD_IMGS = [];
+const CLOUD_IMGS = [], CLOUD_CARD_COUNT = 6;
 let PLANET = null, STARS = null;
 
 // ───────── S1 0–7 · extreme wide, slow pan right, fade in ─────────
@@ -2644,7 +2768,7 @@ shot(0, 7, 'city-wide', {
   camAt(s) { const u = easeInOut(s / 7, 1.6); return C([-6 + 22 * u, 165, -960], [-190 + 215 * u, 22, 0], 34); },
   async paint(Y) {
     const cam = this.cam0, env = ENV.pre();
-    env.hazeDist = 1500; env.detail = 0.8;
+    env.hazeDist = 1500; env.detail = 0.8; env.haze = hex('#a998c4');
     this.sky = mkLayer(9000, 420, 80);
     paintSkyFor(this.sky, cam, PAL.dawnSky, 11, { sunDir: sunDir(-1.5), glowR: 700, glowA: 0.1, span: 1000, rows: 9, big: 180, small: 16, thresh: 0.5 });
     applyPaper(this.sky.canvas, 0.45, 2); await Y();
@@ -2685,7 +2809,7 @@ shot(0, 7, 'city-wide', {
     drawLayer(c, this.front, cam0, cam);
     drawLayer(c, this.fg, cam0, cam);
     leaves(c, s, 6, 3, [0, 0, W, H], 20, [hex('#4b5a3e'), hex('#6c7a48')]);
-    finishFrame(c, f, { wash: [hex('#b7a2c8'), 0.25], top: [hex('#3b3b78'), 0.22, hex('#f0b8a0'), 0.18], light: [W * 0.78, H * 0.38, 900, hex('#ffd6b4'), 0.18], fade: 1 - smoothstep(0, 2.2, t) });
+    finishFrame(c, f, { wash: [hex('#b7a2c8'), 0.25], top: [hex('#3b3b78'), 0.22, hex('#f0b8a0'), 0.18], light: [W * 0.78, H * 0.38, 900, hex('#ffd6b4'), 0.12], fade: 1 - smoothstep(0, 2.2, t) });
   },
 });
 
@@ -2837,7 +2961,7 @@ shot(29.2, 31, 'eyes', {
 shot(31, 35.5, 'rooftops', {
   cam0: C([-300, 100, -430], [-300 + 0.45 * 600, 100 - 0.12 * 600, -430 + 0.88 * 600], 44),
   async paint(Y) {
-    const cam = this.cam0, env = ENV.dawn(6); env.hazeDist = 1500; env.detail = 0.9;
+    const cam = this.cam0, env = ENV.dawn(6); env.hazeDist = 1500; env.detail = 0.9; env.haze = hex('#d8b6b0');
     this.sky = mkLayer(9000, 60, 60);
     const sk = paintSkyFor(this.sky, cam, PAL.dayGold, 18, { sunDir: sunDir(6), glowR: 900, glowA: 0.14, rows: 8, big: 190, small: 18, cloudCols: { mid: hex('#c7b2bd'), lit: hex('#ffd9b0'), hi: hex('#fff0d2'), shade: hex('#9b8fae') } });
     this.sunPos = sk.sun;
@@ -2845,7 +2969,7 @@ shot(31, 35.5, 'rooftops', {
     this.city = mkLayer(400, 60, 60);
     { const P = new Painter(this.city.ctx, 101), hor = sk.hor[1];
       paintSkyline(P, 0, this.city.canvas.width, hor + 6, { seed: 9, wMin: 16, wMax: 46, hMin: 8, hMax: 40, col: hex('#c3a9b0'), win: hex('#dcc3c0'), winA: 0.35, floorPx: 3, broken: 0.3, lit: hex('#ffe0bc'), litA: 0.4, green: 0.25 });
-      paintMist(this.city.ctx, this.city.canvas.width, this.city.canvas.height, hor + 12, 40, hex('#f0d6c6'), 0.5, 21);
+      paintMist(this.city.ctx, this.city.canvas.width, this.city.canvas.height, hor + 12, 40, hex('#f0d6c6'), 0.3, 21);
       await Y();
       paintGround(P, this.city, cam, env, { zNear: 600, strokes: 600, cracks: 30, puddles: 4, trees: false });
       await Y();
@@ -2863,7 +2987,7 @@ shot(31, 35.5, 'rooftops', {
     const rum = t > 31.3 ? 1 : 0;
     const sh = shake(f, rum * lerp(7, 4, s / 4.5), 6, 1);
     const cam = camShifted(this.cam0, sh[0], sh[1]);
-    drawLayer(c, this.sky, this.cam0, cam); drawLayer(c, this.city, this.cam0, cam); drawLayer(c, this.mist, this.cam0, cam, 0.8);
+    drawLayer(c, this.sky, this.cam0, cam); drawLayer(c, this.city, this.cam0, cam); drawLayer(c, this.mist, this.cam0, cam, 0.45);
     // flocks
     const birdCol = 'rgba(58,44,66,0.92)';
     this.roofs.forEach((rp, i) => {
@@ -2878,7 +3002,7 @@ shot(31, 35.5, 'rooftops', {
       }
     });
     const sp = this.sunPos;
-    finishFrame(c, f, { wash: [hex('#f6c79a'), 0.22], light: [sp[0] - 60, sp[1] - 60, 1200, hex('#ffd9a8'), 0.32], top: [hex('#ffe0b0'), 0.1, hex('#6d5f8c'), 0.2] });
+    finishFrame(c, f, { wash: [hex('#f6c79a'), 0.22], light: [sp[0] - 60, sp[1] - 60, 1100, hex('#ffd9a8'), 0.18], top: [hex('#ffe0b0'), 0.08, hex('#5d4f80'), 0.26] });
   },
 });
 
@@ -3016,7 +3140,7 @@ shot(58, 61, 'liftoff', {
   camAt(s) { const y = liftY(onN(s, 1)); const fol = smoothstep(1.3, 2.4, s); return C([17, 2.0, 60], [0, 15 + y * 0.82 * fol + y * 0.25 * (1 - fol), 0], 46); },
   async paint(Y) {
     const cam = this.cam0, env = ENV.dawn(10); env.hazeDist = 420;
-    const mk = (d) => { const L = mkLayer(d, 70, 0); L.canvas.height = H + 1300; L.oy = 1240; L.ctx = L.canvas.getContext('2d'); return L; };
+    const mk = (d) => mkLayerR(d, 70, 580, 70, 60);
     this.sky = mk(9000);
     paintSkyFor(this.sky, cam, PAL.dayGold, 22, { sunDir: sunDir(10), glow: false, rows: 12, big: 160, top: 0 });
     this.city = mk(140);
@@ -3072,13 +3196,13 @@ shot(61, 64, 'pass-by', {
   async paint(Y) {
     const cam = PASS_CAM, env = ENV.dawn(11); env.hazeDist = 520; env.detail = 0.85;
     this.cam0 = cam;
-    this.sky = mkLayer(9000, 1000, 900);
+    this.sky = mkLayerR(9000, 70, 520, 140, 60);
     paintSkyFor(this.sky, cam, PAL.dayGold, 23, { sunDir: sunDir(11), glowR: 800, glowA: 0.12, rows: 16, big: 170, span: 1800, top: 0 });
     applyPaper(this.sky.canvas, 0.4, 22); await Y();
-    this.city = mkLayer(300, 1000, 900);
+    this.city = mkLayerR(300, 70, 520, 140, 60);
     { const P = new Painter(this.city.ctx, 171); paintGround(P, this.city, cam, env, { zNear: 300, strokes: 1200, cracks: 60 }); await Y(); paintCity(P, this.city, cam, env, { filter: (b) => !(b.x0 < 80 && b.x1 > 40 && b.z0 < 140 && b.z1 > 100) }); }
     applyPaper(this.city.canvas, 0.4, 23); await Y();
-    this.fg = mkLayer(12, 1000, 900);
+    this.fg = mkLayerR(12, 70, 520, 140, 60);
     { const L = this.fg, P = new Painter(L.ctx, 181), w = L.canvas.width, h = L.canvas.height;
       const y0 = lp(L, cam, [58, 61, 118])[1];
       P.shape([[0, y0 + 40], [w, y0 - 30], [w, h], [0, h]], hex('#6a6070'), { angle: 0, density: 0.002, len: [20, 70], sw: [3, 8], edgeA: 0.5 });
@@ -3126,7 +3250,7 @@ shot(64, 68.5, 'follow', {
     for (let i = 0; i < 46; i++) {
       const tt = 63.6 + r.f() * 5.6, along = climbPos(tt);
       const side = r.range(-260, -60);
-      this.cards.push({ p: v3.add(along, [side, r.range(-140, 140), r.range(-120, 120)]), img: r.int(0, CLOUD_IMGS.length - 1), size: r.range(80, 220) });
+      this.cards.push({ p: v3.add(along, [side, r.range(-140, 140), r.range(-120, 120)]), img: r.int(0, CLOUD_CARD_COUNT - 1), size: r.range(80, 220) });
     }
   },
   draw(c, s, t, f) {
@@ -3158,7 +3282,7 @@ shot(68.5, 72, 'cloud-punch', {
   camAt(s) { return C([70, 2890, 210], v3.lerp([0, 2840, 0], punchPos(this.t0 + s), 0.75 * smoothstep(0.1, 1.3, s)), 44); },
   async paint(Y) {
     const cam = this.cam0;
-    this.deck = mkLayer(700, 120, 500); this.deck.canvas.height = H + 1000;
+    this.deck = mkLayerR(700, 120, 900, 200, 500);
     { const c = this.deck.ctx, w = this.deck.canvas.width, h = this.deck.canvas.height, P = new Painter(c, 191);
       const hor = lp(this.deck, cam, v3.add(cam.pos, [cam.fwd[0] * 9000, 0, cam.fwd[2] * 9000]))[1];
       paintSky(c, w, h, [[0, hex('#0b1030')], [0.5, hex('#1c2f6a')], [0.8, hex('#5379b6')], [0.95, hex('#bcd0e8')], [1, hex('#f2e2c8')]], 26, { y0: 0, y1: hor + 30 });
@@ -3185,12 +3309,36 @@ shot(68.5, 72, 'cloud-punch', {
     { const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#070a20'); g.addColorStop(1, '#22397a'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
     drawLayer(c, this.deck, this.cam0, cam);
     const hp = cam.project(PUNCH), open = smoothstep(0.0, 0.9, s);
-    if (open > 0) { // the torn hole and its swirl
+    if (open > 0) { // the torn hole: shadowed walls, swirling streaks, ragged rim, fragments flung up after the robot
       const R = 46 * open / cam.upp(hp[2]);
       c.save(); c.translate(hp[0], hp[1]); c.scale(1, 0.34);
-      c.fillStyle = 'rgba(70,90,150,0.85)'; c.beginPath(); c.arc(0, 0, R, 0, 6.3); c.fill();
-      for (let i = 0; i < 18; i++) { const a = i / 18 * 6.28 + s * 1.4, rr = R * (1.05 + 0.25 * hashi(i, 3)); c.fillStyle = i % 2 ? 'rgba(255,252,246,0.92)' : 'rgba(196,208,232,0.9)'; c.beginPath(); c.ellipse(Math.cos(a) * rr, Math.sin(a) * rr, R * 0.32, R * 0.16, a + 1.2, 0, 6.3); c.fill(); }
+      const g = c.createRadialGradient(0, R * 0.2, R * 0.05, 0, 0, R);
+      g.addColorStop(0, 'rgba(30,44,96,0.96)'); g.addColorStop(0.65, 'rgba(66,88,152,0.92)'); g.addColorStop(1, 'rgba(150,170,214,0.88)');
+      c.fillStyle = g; c.beginPath();
+      for (let k = 0; k <= 40; k++) { const a = k / 40 * Math.PI * 2, rr = R * (1 + (noise2(k * 0.6, 3.7) - 0.5) * 0.22); k ? c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      c.fill();
+      c.fillStyle = 'rgba(200,214,240,0.55)'; c.beginPath(); c.ellipse(0, -R * 0.55, R * 0.82, R * 0.32, 0, Math.PI, Math.PI * 2); c.fill(); // the lit far wall
+      c.lineCap = 'round';
+      for (let i = 0; i < 16; i++) {
+        const a0 = i / 16 * Math.PI * 2 + s * 1.2 * (1 + 0.3 * hashi(i, 1)), rr = R * (0.95 + 0.4 * hashi(i, 2));
+        c.strokeStyle = i % 3 ? 'rgba(255,252,246,0.85)' : 'rgba(205,216,238,0.85)'; c.lineWidth = R * 0.07 * (0.5 + hashi(i, 4));
+        c.beginPath(); c.arc(0, 0, rr, a0, a0 + 0.4 + hashi(i, 3) * 0.7); c.stroke();
+      }
+      for (let i = 0; i < 20; i++) {
+        const a = i / 20 * Math.PI * 2 + s * 1.4, rr = R * (1.05 + 0.25 * hashi(i, 3)), pr = R * (0.18 + 0.14 * hashi(i, 6));
+        c.fillStyle = 'rgba(176,192,224,0.92)'; c.beginPath(); c.ellipse(Math.cos(a) * rr, Math.sin(a) * rr, pr * 1.8, pr, a + 1.2, 0, 6.3); c.fill();
+        c.fillStyle = 'rgba(255,252,246,0.95)'; c.beginPath(); c.ellipse(Math.cos(a) * rr - pr * 0.2, Math.sin(a) * rr - pr * 0.35, pr * 1.3, pr * 0.65, a + 1.2, 0, 6.3); c.fill();
+      }
       c.restore();
+      for (let i = 0; i < 18; i++) {
+        const tt = s - 0.05 - hashi(i, 5) * 0.3; if (tt < 0 || tt > 1.5) continue;
+        const wp = v3.add(PUNCH, [(hashi(i, 6) - 0.5) * 70 * (1 + tt), tt * (18 + hashi(i, 7) * 26) - 6 * tt * tt, (hashi(i, 8) - 0.5) * 70 * (1 + tt)]);
+        const p = cam.project(wp); if (p[2] < 1) continue;
+        const pr = (2 + hashi(i, 9) * 3.5) * (1 + tt * 0.5) * smoothstep(1.5, 0.9, tt) / cam.upp(p[2]); // swell, then break up
+        if (pr < 0.5) continue;
+        c.globalAlpha = 1; c.fillStyle = 'rgb(196,208,232)'; c.beginPath(); c.arc(p[0], p[1], pr, 0, 6.3); c.fill();
+        c.fillStyle = 'rgb(255,252,246)'; c.beginPath(); c.arc(p[0] - pr * 0.2, p[1] - pr * 0.3, pr * 0.7, 0, 6.3); c.fill(); c.globalAlpha = 1;
+      }
     }
     const tq = onN(t, 1);
     const trail = []; for (let k = 0; k <= 30; k++) { const tt = tq - 1.2 + k * 0.04; if (tt > 68.52) trail.push(cam.project(punchPos(tt))); }
@@ -3241,7 +3389,9 @@ shot(79, 86, 'space-wide', {
     const trail = []; for (let k = 0; k <= 30; k++) { const ss = s - 2 + k * 0.066; trail.push(cam.project([lerp(-28, 10, ss / 7) - 6, 2 + Math.sin(ss * 0.6) * 0.3 - 2, 0])); }
     lightTrail(c, trail.map((q) => [q[0], q[1]]), 10, hex('#ffd7a0'), hex('#fff7ea'), 0.9);
     const pose = poseFly(p, { pitch: 78, yaw: 82, bank: -4 }, { tuck: 0.8, headPitch: -40 });
-    drawRobot(c, cam, pose, { light: LIGHT.space(), lineW: 1.15, eyeGlow: 1.3, chestGlow: 1, engine: 0.5, boil: f >> 1 });
+    const Ls = LIGHT.space(), toSun = v3.norm(v3.sub(cam.unproject(sun[0], sun[1], 2000), cam.pos));
+    Object.assign(Ls, { sunDir: toSun, rimDir: toSun, rimCol: [1, 0.86, 0.62], rimOn: 1, amb: [0.7, 0.68, 1.05] });
+    drawRobot(c, cam, pose, { light: Ls, lineW: 1.15, eyeGlow: 1.3, chestGlow: 1, engine: 0.5, boil: f >> 1 });
     finishFrame(c, f, { wash: [hex('#8090d0'), 0.1], light: [sun[0], sun[1], 1400, hex('#ffd9a0'), 0.2], vigCol: [30, 30, 60], grain: 0.06, fade: smoothstep(84, 86, t) });
   },
 });
@@ -3265,16 +3415,15 @@ function drawPlanet(c, cx, cy, R, rot, s, glowK) {
   c.restore();
 }
 function paintPlanet() {
-  const n = 1400, cv = newCanvas(n, n), c = cv.getContext('2d'), img = c.createImageData(n, n), d = img.data;
+  const n = 1000, cv = newCanvas(n, n), c = cv.getContext('2d'), img = c.createImageData(n, n), d = img.data;
   const sun = v3.norm([0.85, -0.2, 0.5]);
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const x = i / n * 2 - 1, y = j / n * 2 - 1, rr = x * x + y * y; if (rr > 1) continue;
     const z = Math.sqrt(1 - rr), k = (j * n + i) * 4;
-    const lon = Math.atan2(x, z) * 1.3, lat = y;
-    const land = fbm2(lon * 2.2 + 4, lat * 3.1 + 2, 5) - 0.04 * Math.abs(lat * 3);
-    let col = land > 0.56 ? mixc(hex('#a49264'), hex('#5f7f4a'), clamp((land - 0.56) * 6)) : mixc(hex('#1f4a8a'), hex('#2f6aae'), clamp(land * 1.6));
-    const cl = fbm2(lon * 3.5 + lat * 2 + 20, lat * 7 + 9, 5);
-    col = mixc(col, hex('#f2f4fa'), smoothstep(0.55, 0.72, cl) * 0.92);
+    const land = fbm3(x * 1.9 + 7, y * 1.9 + 3, z * 1.9, 5) - 0.03 * Math.abs(y * 3);
+    let col = land > 0.57 ? mixc(hex('#b39a68'), hex('#5f8048'), clamp((0.66 - land) * 9)) : mixc(hex('#1c4688'), hex('#3577b8'), clamp((land - 0.3) * 3));
+    const swirl = fbm3(x * 3.2 + y * 1.5 + 20, y * 6.5 + 9, z * 3.2, 4);
+    col = mixc(col, hex('#f3f5fb'), smoothstep(0.56, 0.7, swirl) * 0.92);
     const ndl = x * sun[0] + -y * sun[1] + z * sun[2];
     const lit = smoothstep(-0.12, 0.25, ndl);
     col = mixc(mixc(hex('#0b1236'), hex('#2a2a6a'), clamp(ndl + 0.4)), col, lit);
@@ -3285,40 +3434,102 @@ function paintPlanet() {
   c.putImageData(img, 0, 0);
   const P = new Painter(c, 300); // brushed cloud streaks
   c.save(); c.beginPath(); c.arc(n / 2, n / 2, n / 2, 0, 6.3); c.clip();
-  for (let i = 0; i < 700; i++) { const x = P.r.range(0, n), y = P.r.range(0, n); P.stroke(x, y, P.r.range(-0.3, 0.3), P.r.range(40, 160), P.r.range(3, 10), hex('#f6f8ff'), P.r.range(0.05, 0.16), { bristles: 3 }); }
+  for (let i = 0; i < 500; i++) { const x = P.r.range(0, n), y = P.r.range(0, n); P.stroke(x, y, P.r.range(-0.3, 0.3), P.r.range(30, 120), P.r.range(2, 8), hex('#f6f8ff'), P.r.range(0.05, 0.14), { bristles: 3 }); }
   c.restore();
   applyPaper(cv, 0.35, 30);
   return cv;
 }
 
+// shop signs used on old buildings (each painting context makes its own copy)
+function setupSigns() {
+  const signs = [['세탁', '#3b5e8f'], ['식당', '#a5473b'], ['여관', '#6b4f8a'], ['수리', '#8a6b2f'], ['철물', '#3f7a5a'], ['약국', '#3f8a6c']].map(([tx, bg], i) => makeSign(tx, { w: 300, h: 90, bg: hex(bg), fg: hex('#f2eee2'), seed: 40 + i }));
+  for (const k of ['pre', 'dawn']) { const f = ENV[k]; ENV[k] = (...a) => Object.assign(f(...a), { signs }); }
+}
+function paintCommonAssets() {
+  const clouds = [];
+  for (let i = 0; i < CLOUD_CARD_COUNT; i++) { // flight cloud cards
+    const cv = newCanvas(820, 520), P = new Painter(cv.getContext('2d'), 600 + i);
+    paintCumulus(P, 410, 440, 560, 230, { mid: hex('#e9eef7'), lit: hex('#fffaf0'), hi: hex('#fff3dc'), shade: hex('#a9b6d4'), base: hex('#b3bfd9') }, 600 + i, { lx: 0.55, ly: -0.75 });
+    applyPaper(cv, 0.35, 40 + i); clouds.push(cv);
+  }
+  const stars = newCanvas(W + 400, H + 240); paintStars(stars.getContext('2d'), stars.width, stars.height, 77, { n: 2400 });
+  return { SIGN_IMG: makeSign('약국', { w: 360, h: 260, bg: hex('#3f8a6c'), fg: hex('#f4f1e6'), cross: true, seed: 33 }), CLOUD_IMGS: clouds, STARS: stars, PLANET: paintPlanet() };
+}
+function applyCommonAssets(a) { SIGN_IMG = a.SIGN_IMG; CLOUD_IMGS.length = 0; CLOUD_IMGS.push(...a.CLOUD_IMGS); STARS = a.STARS; PLANET = a.PLANET; }
+// a painted shot crosses the worker boundary as plain data + ImageBitmaps
+function packShot(sh) {
+  const out = {}, transfer = [];
+  for (const [k, v] of Object.entries(sh)) {
+    if (k === 't0' || k === 't1' || k === 'name' || typeof v === 'function') continue;
+    if (v && v.canvas && 'ox' in v) { const bmp = v.canvas.transferToImageBitmap(); out[k] = { __layer: 1, bmp, ox: v.ox, oy: v.oy, depth: v.depth }; transfer.push(bmp); }
+    else if (v instanceof Cam) out[k] = { __cam: [v.pos, v.target, v.fov, v.roll, v.shift] };
+    else out[k] = v;
+  }
+  return { out, transfer };
+}
+function unpackShot(sh, out) {
+  for (const [k, v] of Object.entries(out)) sh[k] = v && v.__layer ? { canvas: v.bmp, ox: v.ox, oy: v.oy, depth: v.depth } : v && v.__cam ? new Cam(...v.__cam) : v;
+}
+// rough paint cost per task, so the slowest ones start first
+const PAINT_COST = { 'pass-by': 10, 'city-wide': 6, 'cloud-punch': 6, rooftops: 5, liftoff: 3, common: 2, sparrow: 2, 'look-up': 2, ignite: 2, rise: 2, 'kneel-tilt': 1.5 };
+
 const SCENE = {
   async load(progress, Y) {
-    const T0 = performance.now();
+    const T0 = performance.now(), mark = (l) => DEBUG && console.log(`load ${l}: ${((performance.now() - T0) / 1000).toFixed(1)} s`);
     grainInit();
     ROBOT = new RobotRenderer(buildBear());
-    SIGN_IMG = makeSign('약국', { w: 360, h: 260, bg: hex('#3f8a6c'), fg: hex('#f4f1e6'), cross: true, seed: 33 });
-    const signs = [['세탁', '#3b5e8f'], ['식당', '#a5473b'], ['여관', '#6b4f8a'], ['수리', '#8a6b2f'], ['철물', '#3f7a5a'], ['약국', '#3f8a6c']].map(([tx, bg], i) => makeSign(tx, { w: 300, h: 90, bg: hex(bg), fg: hex('#f2eee2'), seed: 40 + i }));
-    for (const k of ['pre', 'dawn']) { const f = ENV[k]; ENV[k] = (...a) => Object.assign(f(...a), { signs }); }
-    for (let i = 0; i < 6; i++) { // flight cloud cards
-      const cv = newCanvas(820, 520), P = new Painter(cv.getContext('2d'), 600 + i);
-      paintCumulus(P, 410, 440, 560, 230, { mid: hex('#e9eef7'), lit: hex('#fffaf0'), hi: hex('#fff3dc'), shade: hex('#a9b6d4'), base: hex('#b3bfd9') }, 600 + i, { lx: 0.55, ly: -0.75 });
-      applyPaper(cv, 0.35, 40 + i); CLOUD_IMGS.push(cv);
+    setupSigns();
+    mark('robot + signs');
+    const order = ['common', ...SHOTS.map((_, i) => i)].sort((a, b) => (PAINT_COST[typeof b === 'number' ? SHOTS[b].name : b] ?? 0.5) - (PAINT_COST[typeof a === 'number' ? SHOTS[a].name : a] ?? 0.5));
+    const done = new Set();
+    const tick = (id) => { done.add(id); progress(done.size / order.length, `그림을 그리는 중… ${done.size}/${order.length}`); };
+    if (!Q.has('noworker') && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try { await this.paintParallel(order, tick); mark('parallel painting'); }
+      catch (e) { if (DEBUG) console.log('parallel painting failed, painting on the main thread:', e.message); }
     }
-    if (DEBUG) console.log(`paint common: ${(performance.now() - T0).toFixed(0)} ms`);
-    STARS = newCanvas(W + 400, H + 240); paintStars(STARS.getContext('2d'), STARS.width, STARS.height, 77, { n: 2400 });
-    PLANET = paintPlanet();
-    await Y();
-    for (let i = 0; i < SHOTS.length; i++) {
-      progress(i / SHOTS.length, `그림을 그리는 중… ${i + 1}/${SHOTS.length}`);
+    for (const id of order) { // main-thread path (no workers, or whatever the workers did not finish)
+      if (done.has(id)) continue;
       await Y();
-      const t0 = performance.now();
-      await SHOTS[i].paint.call(SHOTS[i], Y);
-      if (DEBUG) console.log(`paint ${SHOTS[i].name}: ${(performance.now() - t0).toFixed(0)} ms`);
+      if (id === 'common') applyCommonAssets(paintCommonAssets());
+      else await SHOTS[id].paint.call(SHOTS[id], Y);
+      tick(id);
     }
+    mark('main-thread painting');
     await titleInit();
+    mark('title');
     // warm-up: draw each shot once so shaders compile and painted layers reach the GPU before playback
     for (const sh of SHOTS) { this.draw(vctx, (sh.t0 + sh.t1) / 2, Math.floor((sh.t0 + sh.t1) / 2 * FPS)); await Y(); }
+    mark('warm-up');
     progress(1);
+  },
+  // paint shots in background workers created from this very script (a blob: URL, no network)
+  paintParallel(order, tick) {
+    const url = URL.createObjectURL(new Blob([document.getElementById('film').textContent], { type: 'text/javascript' }));
+    // leave cores for the three audio render threads that run at the same time
+    const n = clamp((navigator.hardwareConcurrency || 4) - 4, 2, 6), queue = order.slice(), workers = [];
+    return new Promise((resolve, reject) => {
+      let idle = 0, failed = false;
+      const finish = () => { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); };
+      const fail = (err) => { if (failed) return; failed = true; finish(); reject(err); };
+      const next = (w) => {
+        const id = queue.shift();
+        if (id === undefined) { if (++idle === workers.length) { finish(); resolve(); } return; }
+        w.postMessage(id);
+      };
+      for (let i = 0; i < n; i++) {
+        const w = new Worker(url);
+        workers.push(w);
+        w.onmessage = (e) => {
+          const m = e.data;
+          if (m.error) return fail(new Error(m.error));
+          if (DEBUG) console.log(`  worker task ${m.id === 'common' ? 'common' : SHOTS[m.id].name}: ${m.ms ?? '?'} ms`);
+          if (m.id === 'common') applyCommonAssets(m.res); else unpackShot(SHOTS[m.id], m.out);
+          tick(m.id); next(w);
+        };
+        w.onerror = (e) => { e.preventDefault(); fail(new Error(e.message || 'worker error')); };
+      }
+      workers.forEach(next);
+    });
   },
   draw(c, t, f) {
     c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
@@ -3534,9 +3745,10 @@ function roar(K, pts, o = {}) {
 // Events are queued at build time and realized ~1.5 s ahead of the render position (see renderSoundtrack),
 // so the live graph only holds what is sounding now; the output is identical to building everything up front.
 function lazy(fn, tOf = (args) => args[0]) {
+  const tag = fn.name;
   return function (K, ...args) {
     if (K.building) return fn(K, ...args);
-    K.queue.push({ t: tOf(args), run: () => fn(K, ...args) });
+    K.queue.push({ t: tOf(args), tag, run: () => fn(K, ...args) });
   };
 }
 noiseHit = lazy(noiseHit); tone = lazy(tone); piano = lazy(piano); strings = lazy(strings); horn = lazy(horn);
@@ -3714,15 +3926,13 @@ function master(buf) {
 }
 const MASTER_DB = 0.6;
 
-async function renderSoundtrack() {
-  SOUND_EVENTS.length = 0;
+// One part of the score rendered in its own OfflineAudioContext (its own audio thread). Buses, reverbs and the
+// later mastering are linear, so rendering groups apart and summing them equals rendering them together.
+async function renderPart(build, keep) {
   const ctx = new OfflineAudioContext(2, SR * DURATION, SR);
   const K = audioKit(ctx);
-  const stem = typeof Q !== 'undefined' ? Q.get('stem') : null; // debug: render one group alone, unmastered
-  if (!stem || stem === 'amb') buildAmbience(K);
-  if (!stem || stem === 'sfx') buildSfx(K);
-  if (!stem || stem === 'music') buildMusic(K);
-  const Qe = K.queue.sort((a, b) => a.t - b.t), live = [];
+  build(K);
+  const Qe = K.queue.filter(keep).sort((a, b) => a.t - b.t), live = [];
   let qi = 0;
   const realize = (until) => {
     while (qi < Qe.length && Qe[qi].t < until) {
@@ -3737,10 +3947,28 @@ async function renderSoundtrack() {
   const STEP = 1, AHEAD = 1.5;
   realize(AHEAD);
   for (let T = STEP; T < DURATION; T += STEP) ctx.suspend(T).then(() => { cull(T); realize(T + AHEAD); ctx.resume(); });
-  const buf = await ctx.startRendering();
-  if (!stem) master(buf);
-  SOUND_EVENTS.sort((a, b) => a.t - b.t);
-  return buf;
+  return ctx.startRendering();
+}
+
+async function renderSoundtrack() {
+  SOUND_EVENTS.length = 0;
+  const stem = typeof Q !== 'undefined' ? Q.get('stem') : null; // debug: render one group alone, unmastered
+  const parts = [];
+  if (!stem || stem === 'amb' || stem === 'sfx') parts.push(renderPart((K) => { if (stem !== 'sfx') buildAmbience(K); if (stem !== 'amb') buildSfx(K); }, () => true));
+  if (!stem || stem === 'music') {
+    parts.push(renderPart(buildMusic, (e) => e.tag === 'strings'));
+    parts.push(renderPart(buildMusic, (e) => e.tag !== 'strings'));
+  }
+  const bufs = await Promise.all(parts);
+  const out = new AudioBuffer({ length: SR * DURATION, numberOfChannels: 2, sampleRate: SR });
+  for (let ch = 0; ch < 2; ch++) {
+    const o = out.getChannelData(ch);
+    for (const b of bufs) { const d = b.getChannelData(ch); for (let i = 0; i < o.length; i++) o[i] += d[i]; }
+  }
+  if (!stem) master(out);
+  const seen = new Set(), uniq = SOUND_EVENTS.filter((e) => { const k = e.t + e.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  SOUND_EVENTS.length = 0; SOUND_EVENTS.push(...uniq.sort((a, b) => a.t - b.t));
+  return out;
 }
 // ───────────────────────────── title: "새벽곰" painted in the backgrounds' gouache over a MaruBuri Bold skeleton ─────────────────────────────
 const TITLE_FONT_B64 = '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';
@@ -3810,11 +4038,12 @@ function drawTitle(c, t, f) {
   c.globalAlpha = 1;
 }
 // ───────────────────────────── main: loading, audio-clocked playback, controls, debug hooks ─────────────────────────────
-const Q = new URLSearchParams(location.search);
+const Q = new URLSearchParams(IN_WORKER ? '' : location.search);
 const DEBUG = Q.has('debug'), NOAUDIO = Q.has('noaudio');
-const view = document.getElementById('view'), vctx = view.getContext('2d');
-const overlay = document.getElementById('overlay'), msgEl = document.getElementById('msg'), barEl = document.querySelector('#bar > i'), toastEl = document.getElementById('toast');
-const SB = window.SB = { isReady: false, canvas: view };
+const $ = (sel) => (IN_WORKER ? null : document.querySelector(sel));
+const view = $('#view'), vctx = view ? view.getContext('2d') : null;
+const overlay = $('#overlay'), msgEl = $('#msg'), barEl = $('#bar > i'), toastEl = $('#toast');
+const SB = IN_WORKER ? {} : (window.SB = { isReady: false, canvas: view });
 let SOUND = null;
 const player = { state: 'loading', ac: null, src: null, gain: null, t0: 0, pausedAt: 0, muted: false, lastFrame: -1, raf: 0 };
 
@@ -3885,20 +4114,22 @@ function primary() {
   else if (player.state === 'playing') pause();
   else if (player.state === 'paused') startAt(player.pausedAt);
 }
-overlay.addEventListener('click', primary);
-view.addEventListener('click', primary);
-window.addEventListener('keydown', (e) => {
-  if (player.state === 'loading') return;
-  if (e.code === 'Space') { e.preventDefault(); primary(); }
-  else if (e.code === 'KeyM') {
-    player.muted = !player.muted;
-    if (player.gain) player.gain.gain.setTargetAtTime(player.muted ? 0 : 1, player.ac.currentTime, 0.03);
-    toast(player.muted ? '소리 끔' : '소리 켬');
-  } else if (e.code === 'ArrowRight') seek(5);
-  else if (e.code === 'ArrowLeft') seek(-5);
-  else if (e.code === 'KeyR' || e.code === 'Home') startAt(0);
-  else if (e.code === 'KeyF') { const st = document.getElementById('stage'); document.fullscreenElement ? document.exitFullscreen() : st.requestFullscreen?.(); }
-});
+if (!IN_WORKER) {
+  overlay.addEventListener('click', primary);
+  view.addEventListener('click', primary);
+  window.addEventListener('keydown', (e) => {
+    if (player.state === 'loading') return;
+    if (e.code === 'Space') { e.preventDefault(); primary(); }
+    else if (e.code === 'KeyM') {
+      player.muted = !player.muted;
+      if (player.gain) player.gain.gain.setTargetAtTime(player.muted ? 0 : 1, player.ac.currentTime, 0.03);
+      toast(player.muted ? '소리 끔' : '소리 켬');
+    } else if (e.code === 'ArrowRight') seek(5);
+    else if (e.code === 'ArrowLeft') seek(-5);
+    else if (e.code === 'KeyR' || e.code === 'Home') startAt(0);
+    else if (e.code === 'KeyF') { const st = document.getElementById('stage'); document.fullscreenElement ? document.exitFullscreen() : st.requestFullscreen?.(); }
+  });
+}
 
 async function boot() {
   try {
@@ -3907,7 +4138,9 @@ async function boot() {
     // the soundtrack renders on the audio thread while the main thread paints the backgrounds
     const soundP = NOAUDIO ? null : renderSoundtrack();
     await SCENE.load((p, l) => progress(p * (NOAUDIO ? 1 : 0.9), l), yieldUI);
+    const tPaint = performance.now();
     if (soundP) { progress(0.9, '소리를 합성하는 중…'); await yieldUI(); SOUND = await soundP; }
+    if (DEBUG) console.log(`load: pictures ${(tPaint / 1000).toFixed(1)} s, sound ${(performance.now() / 1000).toFixed(1)} s`);
     progress(1);
     blackFrame();
     player.state = 'idle';
@@ -3954,7 +4187,26 @@ function encodeWav24(buf) {
   return btoa(s);
 }
 
-boot();
+// background painter: paints the shots it is handed and sends the layers back as ImageBitmaps
+function workerMain() {
+  paperInit(); setupSigns();
+  self.onmessage = async (e) => {
+    const id = e.data;
+    try {
+      if (id === 'common') {
+        const a = paintCommonAssets(), bm = (cv) => cv.transferToImageBitmap();
+        const res = { SIGN_IMG: bm(a.SIGN_IMG), CLOUD_IMGS: a.CLOUD_IMGS.map(bm), STARS: bm(a.STARS), PLANET: bm(a.PLANET) };
+        self.postMessage({ id, res }, [res.SIGN_IMG, ...res.CLOUD_IMGS, res.STARS, res.PLANET]);
+      } else {
+        const sh = SHOTS[id], t0 = performance.now();
+        await sh.paint.call(sh, async () => {});
+        const { out, transfer } = packShot(sh);
+        self.postMessage({ id, out, ms: Math.round(performance.now() - t0) }, transfer);
+      }
+    } catch (err) { self.postMessage({ id, error: String((err && err.stack) || err) }); }
+  };
+}
+if (IN_WORKER) workerMain(); else boot();
 </script>
 </body>
 </html>

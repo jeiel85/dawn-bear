@@ -1,9 +1,10 @@
 // ───────────────────────────── main: loading, audio-clocked playback, controls, debug hooks ─────────────────────────────
-const Q = new URLSearchParams(location.search);
+const Q = new URLSearchParams(IN_WORKER ? '' : location.search);
 const DEBUG = Q.has('debug'), NOAUDIO = Q.has('noaudio');
-const view = document.getElementById('view'), vctx = view.getContext('2d');
-const overlay = document.getElementById('overlay'), msgEl = document.getElementById('msg'), barEl = document.querySelector('#bar > i'), toastEl = document.getElementById('toast');
-const SB = window.SB = { isReady: false, canvas: view };
+const $ = (sel) => (IN_WORKER ? null : document.querySelector(sel));
+const view = $('#view'), vctx = view ? view.getContext('2d') : null;
+const overlay = $('#overlay'), msgEl = $('#msg'), barEl = $('#bar > i'), toastEl = $('#toast');
+const SB = IN_WORKER ? {} : (window.SB = { isReady: false, canvas: view });
 let SOUND = null;
 const player = { state: 'loading', ac: null, src: null, gain: null, t0: 0, pausedAt: 0, muted: false, lastFrame: -1, raf: 0 };
 
@@ -74,20 +75,22 @@ function primary() {
   else if (player.state === 'playing') pause();
   else if (player.state === 'paused') startAt(player.pausedAt);
 }
-overlay.addEventListener('click', primary);
-view.addEventListener('click', primary);
-window.addEventListener('keydown', (e) => {
-  if (player.state === 'loading') return;
-  if (e.code === 'Space') { e.preventDefault(); primary(); }
-  else if (e.code === 'KeyM') {
-    player.muted = !player.muted;
-    if (player.gain) player.gain.gain.setTargetAtTime(player.muted ? 0 : 1, player.ac.currentTime, 0.03);
-    toast(player.muted ? '소리 끔' : '소리 켬');
-  } else if (e.code === 'ArrowRight') seek(5);
-  else if (e.code === 'ArrowLeft') seek(-5);
-  else if (e.code === 'KeyR' || e.code === 'Home') startAt(0);
-  else if (e.code === 'KeyF') { const st = document.getElementById('stage'); document.fullscreenElement ? document.exitFullscreen() : st.requestFullscreen?.(); }
-});
+if (!IN_WORKER) {
+  overlay.addEventListener('click', primary);
+  view.addEventListener('click', primary);
+  window.addEventListener('keydown', (e) => {
+    if (player.state === 'loading') return;
+    if (e.code === 'Space') { e.preventDefault(); primary(); }
+    else if (e.code === 'KeyM') {
+      player.muted = !player.muted;
+      if (player.gain) player.gain.gain.setTargetAtTime(player.muted ? 0 : 1, player.ac.currentTime, 0.03);
+      toast(player.muted ? '소리 끔' : '소리 켬');
+    } else if (e.code === 'ArrowRight') seek(5);
+    else if (e.code === 'ArrowLeft') seek(-5);
+    else if (e.code === 'KeyR' || e.code === 'Home') startAt(0);
+    else if (e.code === 'KeyF') { const st = document.getElementById('stage'); document.fullscreenElement ? document.exitFullscreen() : st.requestFullscreen?.(); }
+  });
+}
 
 async function boot() {
   try {
@@ -96,7 +99,9 @@ async function boot() {
     // the soundtrack renders on the audio thread while the main thread paints the backgrounds
     const soundP = NOAUDIO ? null : renderSoundtrack();
     await SCENE.load((p, l) => progress(p * (NOAUDIO ? 1 : 0.9), l), yieldUI);
+    const tPaint = performance.now();
     if (soundP) { progress(0.9, '소리를 합성하는 중…'); await yieldUI(); SOUND = await soundP; }
+    if (DEBUG) console.log(`load: pictures ${(tPaint / 1000).toFixed(1)} s, sound ${(performance.now() / 1000).toFixed(1)} s`);
     progress(1);
     blackFrame();
     player.state = 'idle';
@@ -143,4 +148,23 @@ function encodeWav24(buf) {
   return btoa(s);
 }
 
-boot();
+// background painter: paints the shots it is handed and sends the layers back as ImageBitmaps
+function workerMain() {
+  paperInit(); setupSigns();
+  self.onmessage = async (e) => {
+    const id = e.data;
+    try {
+      if (id === 'common') {
+        const a = paintCommonAssets(), bm = (cv) => cv.transferToImageBitmap();
+        const res = { SIGN_IMG: bm(a.SIGN_IMG), CLOUD_IMGS: a.CLOUD_IMGS.map(bm), STARS: bm(a.STARS), PLANET: bm(a.PLANET) };
+        self.postMessage({ id, res }, [res.SIGN_IMG, ...res.CLOUD_IMGS, res.STARS, res.PLANET]);
+      } else {
+        const sh = SHOTS[id], t0 = performance.now();
+        await sh.paint.call(sh, async () => {});
+        const { out, transfer } = packShot(sh);
+        self.postMessage({ id, out, ms: Math.round(performance.now() - t0) }, transfer);
+      }
+    } catch (err) { self.postMessage({ id, error: String((err && err.stack) || err) }); }
+  };
+}
+if (IN_WORKER) workerMain(); else boot();
